@@ -1,0 +1,7 @@
+{
+  "provider": "metron",
+  "metron": {
+    "username": "YOUR_METRON_USERNAME",
+    "password": "YOUR_METRON_PASSWORD"
+  }
+}

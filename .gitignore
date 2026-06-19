@@ -1,0 +1,26 @@
+# Compiled binary
+/cb
+
+# Comic archives (test fixtures / personal scans, not source)
+*.cbz
+
+# Local config — may hold provider credentials
+config.json
+*.local.*
+
+# Personal scratch
+/session
+
+# Devenv
+.devenv*
+devenv.local.nix
+devenv.local.yaml
+
+# direnv
+.direnv
+
+# pre-commit
+.pre-commit-config.yaml
+
+# Internal roadmap
+ROADMAP.md
