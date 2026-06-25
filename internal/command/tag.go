@@ -26,6 +26,7 @@ import (
 func Tag(args []string) error {
 	fs := flag.NewFlagSet("tag", flag.ExitOnError)
 	id := fs.String("id", "", "tag a specific issue by provider issue ID (online)")
+	seriesID := fs.String("series-id", "", "tag a file or directory against a known provider series ID; match each file by its issue number (online)")
 	dryRun := fs.Bool("dry-run", false, "print the resolved ComicInfo without writing (online)")
 	force := fs.Bool("force", false, "overwrite an existing ComicInfo.xml")
 	pick := fs.Bool("pick", false, "always show the series picker (online; skip auto-match)")
@@ -36,7 +37,7 @@ func Tag(args []string) error {
 	fs.BoolVar(verbose, "v", false, "shorthand for --verbose")
 	_ = fs.Parse(args)
 	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: cb tag [--manual] [--id <issueID>] [--dry-run] [--force] [--pick] [--refresh] [-v] <path>")
+		return fmt.Errorf("usage: cb tag [--manual] [--id <issueID>] [--series-id <seriesID>] [--dry-run] [--force] [--pick] [--refresh] [-v] <path>")
 	}
 	target := fs.Arg(0)
 
@@ -44,12 +45,23 @@ func Tag(args []string) error {
 		switch {
 		case *id != "":
 			return fmt.Errorf("tag: --manual and --id are mutually exclusive")
+		case *seriesID != "":
+			return fmt.Errorf("tag: --series-id applies only to online tagging")
 		case *pick:
 			return fmt.Errorf("tag: --pick applies only to online tagging")
 		case *dryRun:
 			return fmt.Errorf("tag: --dry-run applies only to online tagging")
 		case *refresh:
 			return fmt.Errorf("tag: --refresh applies only to online tagging")
+		}
+	}
+
+	if *seriesID != "" {
+		switch {
+		case *id != "":
+			return fmt.Errorf("tag: --id and --series-id are mutually exclusive")
+		case *pick:
+			return fmt.Errorf("tag: --pick and --series-id are mutually exclusive")
 		}
 	}
 
@@ -68,6 +80,9 @@ func Tag(args []string) error {
 	prov, err := openProvider(*refresh)
 	if err != nil {
 		return err
+	}
+	if *seriesID != "" {
+		return tagBySeriesID(prov, target, info.IsDir(), *seriesID, *dryRun, *force, *verbose)
 	}
 	if info.IsDir() {
 		return tagDirOnline(prov, target, *dryRun, *force, *id, *verbose)
@@ -132,9 +147,12 @@ func tagFileOnline(prov provider.Provider, path, id string, dryRun, force, pick,
 	return writeComicInfo(path, ci)
 }
 
-// tagDirOnline processes every .cbz in a directory non-interactively: it
-// auto-matches each file and skips (without prompting) anything it can't
-// confidently resolve, so one ambiguous file never blocks the batch.
+// tagDirOnline tags every .cbz in a directory by name search. Files are grouped
+// by their parsed series name, each series is resolved once (and the whole group
+// is skipped with a single message if it can't be — no per-issue churn on a
+// miss), the local issue count is verified against the provider's, and each file
+// is then matched by its number. A mixed directory (several series) is handled
+// by resolving each group independently, so one bad group never blocks another.
 func tagDirOnline(prov provider.Provider, dir string, dryRun, force bool, id string, verbose bool) error {
 	if id != "" {
 		return fmt.Errorf("tag: --id cannot be combined with a directory")
@@ -143,98 +161,409 @@ func tagDirOnline(prov provider.Provider, dir string, dryRun, force bool, id str
 	if err != nil {
 		return err
 	}
+	groups, ungroupable := groupBySeries(files)
+	if verbose {
+		printGroupingTree(groups, ungroupable)
+	}
 
 	var resolved, skipped, failed int
-	for _, f := range files {
-		a, oerr := archive.Open(f)
-		if oerr != nil {
-			fmt.Fprintf(os.Stderr, "cb: %s: %v\n", f, oerr)
-			failed++
-			continue
-		}
-		_, _, found, _ := a.ReadComicInfo()
-		pageCount := a.PageCount()
-		a.Close()
-		if found && !force && !dryRun {
-			fmt.Printf("%s: already has ComicInfo.xml (skipped; use --force)\n", f)
-			skipped++
-			continue
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-		ci, matched, rerr := autoResolve(ctx, prov, f, verbose)
-		cancel()
-		if rerr != nil {
-			// A clean "no match" is a skip, not a failure — one missing issue
-			// shouldn't count against the batch like a real (transport) error.
-			// Throttling is handled inside the provider (it waits and retries),
-			// so by the time an error reaches here we just record and move on.
-			if errors.Is(rerr, provider.ErrNotFound) {
-				fmt.Printf("%s: no matching issue found; skipped\n", f)
-				skipped++
-			} else {
-				fmt.Fprintf(os.Stderr, "cb: %s: %v\n", f, rerr)
-				failed++
-			}
-			continue
-		}
-		if !matched {
-			fmt.Printf("%s: no confident auto-match; skipped (run 'cb tag' on it directly)\n", f)
-			skipped++
-			continue
-		}
-		ci.PageCount = pageCount
-
-		if dryRun {
-			if perr := printDryRun(f, prov.Name(), ci); perr != nil {
-				fmt.Fprintf(os.Stderr, "cb: %s: %v\n", f, perr)
-				failed++
-				continue
-			}
-		} else if werr := writeComicInfo(f, ci); werr != nil {
-			fmt.Fprintf(os.Stderr, "cb: %s: %v\n", f, werr)
-			failed++
-			continue
-		}
-		resolved++
+	for _, f := range ungroupable {
+		fmt.Printf("%s: no series parsed from filename; skipped\n", f)
+		skipped++
+	}
+	for _, g := range groups {
+		r, s, fl := tagSeriesGroup(prov, g, dryRun, force, verbose)
+		resolved += r
+		skipped += s
+		failed += fl
 	}
 	fmt.Printf("done: %d resolved, %d skipped, %d failed\n", resolved, skipped, failed)
 	return nil
 }
 
-// autoResolve does a no-prompt resolution for batch mode: it requires the
-// filename to yield a series and number, and the series to auto-match uniquely.
-// matched=false (with a nil error) means "couldn't confidently resolve" — the
-// caller should skip rather than abort.
-func autoResolve(ctx context.Context, prov provider.Provider, path string, verbose bool) (ci *comicinfo.ComicInfo, matched bool, err error) {
-	parsed := filename.Parse(path)
-	if parsed.Series == "" || parsed.Number == "" {
-		if verbose {
-			fmt.Printf("[verbose] %s\n[verbose]   parsed: series=%q number=%q — incomplete, cannot auto-match\n", path, parsed.Series, parsed.Number)
-		}
-		return nil, false, nil
-	}
-	results, err := prov.SearchSeries(ctx, parsed.Series)
+// tagSeriesGroup resolves one series (by name, once) and tags the group's files,
+// returning the group's resolved/skipped/failed tallies. A series that can't be
+// confidently matched, or whose local issue count exceeds the provider's record,
+// is skipped wholesale with one message rather than probed file-by-file.
+func tagSeriesGroup(prov provider.Provider, g *seriesGroup, dryRun, force, verbose bool) (resolved, skipped, failed int) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	results, err := prov.SearchSeries(ctx, g.display)
+	cancel()
 	if err != nil {
-		return nil, false, err
+		fmt.Fprintf(os.Stderr, "cb: series %q: %v\n", g.display, err)
+		return 0, 0, len(g.files)
 	}
-	results = preferEdition(results, parsed.Series)
-	s, ok := bestSeriesMatch(results, parsed.Series, parsed.Year)
+	results = preferEdition(results, g.display)
+	series, ok := bestSeriesMatch(results, g.display, g.repYear())
 	if verbose {
 		var picked *provider.SeriesResult
 		if ok {
-			picked = &s
+			picked = &series
 		}
-		printSearchDiagnostics(path, parsed, results, picked)
+		printGroupDiagnostics(g, results, picked)
 	}
 	if !ok {
-		return nil, false, nil
+		fmt.Printf("series %q: no confident match; skipping %d file(s) (tag individually or use --series-id)\n", g.display, len(g.files))
+		return 0, len(g.files), 0
 	}
-	ci, err = prov.IssueByNumber(ctx, s.ID, parsed.Number)
+	label := fmt.Sprintf("series %q", seriesLabel(series))
+
+	// Verify how much of the run we hold before doing any per-issue work: more
+	// local issues than the series has on record is a strong "wrong series /
+	// oddly-split files" signal, so refuse the whole group rather than mis-tag.
+	local := distinctNumbers(g.parsed)
+	switch verdict := classifyIssueCount(local, series.IssueCount); verdict {
+	case countOver:
+		fmt.Fprintf(os.Stderr, "cb: %s; skipping %d file(s)\n", issueCountNote(label, verdict, local, series.IssueCount), len(g.files))
+		return 0, len(g.files), 0
+	case countIncomplete:
+		fmt.Printf("%s\n", issueCountNote(label, verdict, local, series.IssueCount))
+	case countComplete:
+		if verbose {
+			fmt.Printf("%s\n", issueCountNote(label, verdict, local, series.IssueCount))
+		}
+	}
+
+	resolve := func(ctx context.Context, number string) (*comicinfo.ComicInfo, error) {
+		return prov.IssueByNumber(ctx, series.ID, number)
+	}
+	for _, f := range g.files {
+		written, ferr := tagFileWithResolver(prov, f, resolve, dryRun, force)
+		switch {
+		case ferr != nil:
+			fmt.Fprintf(os.Stderr, "cb: %s: %v\n", f, ferr)
+			failed++
+		case written:
+			resolved++
+		default:
+			skipped++
+		}
+	}
+	return resolved, skipped, failed
+}
+
+// seriesGroup collects the files in a directory that parsed to the same series
+// name, so the series is resolved (and verified) once for the whole group.
+type seriesGroup struct {
+	display string                // representative parsed series name (search + messages)
+	files   []string              // archive paths in the group
+	parsed  []filename.ParsedName // parsed names, index-aligned with files
+}
+
+// repYear returns the earliest non-zero cover year in the group, the best proxy
+// for the series' start year (used only as a same-name tiebreaker). Later issues
+// of a run carry later cover years, so the minimum is closest to when it began.
+func (g *seriesGroup) repYear() int {
+	min := 0
+	for _, p := range g.parsed {
+		if p.Year > 0 && (min == 0 || p.Year < min) {
+			min = p.Year
+		}
+	}
+	return min
+}
+
+// groupBySeries buckets files by parsed series name, normalized via matchKey so
+// "Aliens Vampirella" and "Aliens / Vampirella" co-group. Group order is stable
+// (first-seen). Files with no parsable series come back as ungroupable.
+func groupBySeries(files []string) (groups []*seriesGroup, ungroupable []string) {
+	byKey := make(map[string]*seriesGroup)
+	for _, f := range files {
+		p := filename.Parse(f)
+		if p.Series == "" {
+			ungroupable = append(ungroupable, f)
+			continue
+		}
+		key := matchKey(p.Series)
+		g := byKey[key]
+		if g == nil {
+			g = &seriesGroup{display: p.Series}
+			byKey[key] = g
+			groups = append(groups, g)
+		}
+		g.files = append(g.files, f)
+		g.parsed = append(g.parsed, p)
+	}
+	return groups, ungroupable
+}
+
+// printGroupingTree shows, under -v, how the directory's files bucketed into
+// series groups before any network call — each group with its issues, plus any
+// ungroupable files. This is the "how did cb group my files?" view; the actual
+// provider match for each group is printed later by printGroupDiagnostics.
+func printGroupingTree(groups []*seriesGroup, ungroupable []string) {
+	fmt.Printf("[verbose] grouped local files into %d series:\n", len(groups))
+	for _, g := range groups {
+		year := "year ?"
+		if y := g.repYear(); y > 0 {
+			year = fmt.Sprintf("~%d", y)
+		}
+		fmt.Printf("[verbose]   %s (%s) — %d issue(s)\n", g.display, year, distinctNumbers(g.parsed))
+		for i, p := range g.parsed {
+			num := p.Number
+			if num == "" {
+				num = "?"
+			}
+			fmt.Printf("[verbose]       #%-5s %s\n", num, filepath.Base(g.files[i]))
+		}
+	}
+	if len(ungroupable) > 0 {
+		fmt.Printf("[verbose]   (no series parsed — ungroupable)\n")
+		for _, f := range ungroupable {
+			fmt.Printf("[verbose]       %s\n", filepath.Base(f))
+		}
+	}
+}
+
+// printSeriesIDTree shows, under -v, the local files being tagged against an
+// explicit --series-id, each with its parsed number and whether that number is
+// present in the series. It's the single-series analogue of the grouping tree,
+// so both batch paths give the same "here's what I'm about to do" view.
+func printSeriesIDTree(seriesID string, available int, files []string, parsed []filename.ParsedName, byNum map[string]string) {
+	fmt.Printf("[verbose] series %s — %d issue(s) available; %d local file(s):\n", seriesID, available, len(files))
+	for i, f := range files {
+		num, status := parsed[i].Number, "in series"
+		switch num {
+		case "":
+			num, status = "?", "no number parsed"
+		default:
+			if _, ok := byNum[canonNumber(num)]; !ok {
+				status = "not in series"
+			}
+		}
+		fmt.Printf("[verbose]       #%-5s %s  (%s)\n", num, filepath.Base(f), status)
+	}
+}
+
+// printGroupDiagnostics dumps, under -v, the series candidates a group's name
+// search returned, marking the resolved one with "=>".
+func printGroupDiagnostics(g *seriesGroup, results []provider.SeriesResult, picked *provider.SeriesResult) {
+	fmt.Printf("[verbose] resolving %q:\n", g.display)
+	for _, s := range results {
+		mark := "  "
+		if picked != nil && s.ID == picked.ID {
+			mark = "=>"
+		}
+		fmt.Printf("[verbose]   %s %s [%d issues] id=%s\n", mark, seriesLabel(s), s.IssueCount, s.ID)
+	}
+}
+
+// tagBySeriesID tags one file or a whole directory against a known provider
+// series ID. It enumerates the series' issues once (SeriesIssueLister), builds a
+// number -> issueID map, then matches each file by its parsed issue number and
+// writes that issue's full metadata. This skips name-search entirely — there is
+// no fuzzy matching — and costs one list call plus one detail per matched file.
+// For a directory it applies the same completeness verification as name-search
+// batch tagging, refusing to tag when more local issues exist than the series.
+func tagBySeriesID(prov provider.Provider, target string, isDir bool, seriesID string, dryRun, force, verbose bool) error {
+	lister, ok := prov.(provider.SeriesIssueLister)
+	if !ok {
+		return fmt.Errorf("tag: the %s provider does not support --series-id", prov.Name())
+	}
+
+	listCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	stubs, err := lister.ListIssues(listCtx, seriesID)
+	cancel()
 	if err != nil {
-		return nil, false, err
+		return err
 	}
-	return ci, true, nil
+	// number -> issueID, keyed by a canonical number so "001" matches "1".
+	byNum := make(map[string]string, len(stubs))
+	for _, s := range stubs {
+		byNum[canonNumber(s.Number)] = s.ID
+	}
+	// A number not in the listed series is a clean per-file skip (ErrNotFound).
+	resolve := func(ctx context.Context, number string) (*comicinfo.ComicInfo, error) {
+		id, ok := byNum[canonNumber(number)]
+		if !ok {
+			return nil, fmt.Errorf("issue %q not in series %s: %w", number, seriesID, provider.ErrNotFound)
+		}
+		return prov.IssueByID(ctx, id)
+	}
+
+	// Collect the target file(s) and parse them up front so -v can show the same
+	// file -> issue tree the name-search path does.
+	var files []string
+	if isDir {
+		files, err = cbzFiles(target)
+		if err != nil {
+			return err
+		}
+	} else {
+		files = []string{target}
+	}
+	parsed := make([]filename.ParsedName, len(files))
+	for i, f := range files {
+		parsed[i] = filename.Parse(f)
+	}
+	if verbose {
+		printSeriesIDTree(seriesID, len(stubs), files, parsed, byNum)
+	}
+
+	if !isDir {
+		_, err := tagFileWithResolver(prov, target, resolve, dryRun, force)
+		return err
+	}
+
+	// Same completeness check as the name-search path (consistency): the issue
+	// list we just fetched is the authoritative count.
+	local := distinctNumbers(parsed)
+	label := fmt.Sprintf("series %s", seriesID)
+	switch verdict := classifyIssueCount(local, len(stubs)); verdict {
+	case countOver:
+		return fmt.Errorf("%s; refusing to tag (verify the series id, the files, or split the directory)", issueCountNote(label, verdict, local, len(stubs)))
+	case countIncomplete:
+		fmt.Printf("%s\n", issueCountNote(label, verdict, local, len(stubs)))
+	case countComplete:
+		if verbose {
+			fmt.Printf("%s\n", issueCountNote(label, verdict, local, len(stubs)))
+		}
+	}
+
+	var resolved, skipped, failed int
+	for _, f := range files {
+		written, ferr := tagFileWithResolver(prov, f, resolve, dryRun, force)
+		switch {
+		case ferr != nil:
+			fmt.Fprintf(os.Stderr, "cb: %s: %v\n", f, ferr)
+			failed++
+		case written:
+			resolved++
+		default:
+			skipped++
+		}
+	}
+	fmt.Printf("done: %d resolved, %d skipped, %d failed\n", resolved, skipped, failed)
+	return nil
+}
+
+// issueResolver turns a parsed issue number into resolved metadata for an
+// already-determined series. The two batch paths differ only here: name-search
+// grouping looks the number up in the series (IssueByNumber); --series-id looks
+// it up in the pre-listed issue map (IssueByID). A number the series doesn't
+// contain must be reported as provider.ErrNotFound so callers treat it as a skip.
+type issueResolver func(ctx context.Context, number string) (*comicinfo.ComicInfo, error)
+
+// tagFileWithResolver applies a resolved-series issueResolver to one archive: it
+// honors an existing ComicInfo (unless force/dry-run), requires a parsed issue
+// number, fetches metadata, takes PageCount from the archive, and writes (or
+// dry-run prints). A number the series lacks (ErrNotFound) is a skip, not an
+// error, so one stray file never aborts a batch. written is true only when
+// metadata was produced.
+func tagFileWithResolver(prov provider.Provider, path string, resolve issueResolver, dryRun, force bool) (written bool, err error) {
+	a, err := archive.Open(path)
+	if err != nil {
+		return false, err
+	}
+	_, _, found, _ := a.ReadComicInfo()
+	pageCount := a.PageCount()
+	a.Close()
+	if found && !force && !dryRun {
+		fmt.Printf("%s: already has ComicInfo.xml (skipped; use --force)\n", path)
+		return false, nil
+	}
+
+	number := filename.Parse(path).Number
+	if number == "" {
+		fmt.Printf("%s: no issue number parsed from filename; skipped\n", path)
+		return false, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ci, err := resolve(ctx, number)
+	cancel()
+	if err != nil {
+		if errors.Is(err, provider.ErrNotFound) {
+			fmt.Printf("%s: issue #%s not in the series; skipped\n", path, number)
+			return false, nil
+		}
+		return false, err
+	}
+	ci.PageCount = pageCount // archive is authoritative for PageCount
+
+	if dryRun {
+		if perr := printDryRun(path, prov.Name(), ci); perr != nil {
+			return false, perr
+		}
+		return true, nil
+	}
+	if werr := writeComicInfo(path, ci); werr != nil {
+		return false, werr
+	}
+	return true, nil
+}
+
+// seriesCountVerdict classifies how the count of distinct issues held locally
+// compares to the count the provider reports for the series. It is the shared
+// verification behind both batch paths, so they behave identically.
+type seriesCountVerdict int
+
+const (
+	countUnknown    seriesCountVerdict = iota // provider reported no count; can't verify
+	countComplete                             // local == reported
+	countIncomplete                           // local < reported (only part of the run)
+	countOver                                 // local > reported (likely the wrong series)
+)
+
+// classifyIssueCount compares distinct local issue numbers to the provider's
+// reported issue count (reported <= 0 means "unknown", so checks are skipped).
+func classifyIssueCount(localDistinct, reported int) seriesCountVerdict {
+	switch {
+	case reported <= 0:
+		return countUnknown
+	case localDistinct > reported:
+		return countOver
+	case localDistinct < reported:
+		return countIncomplete
+	default:
+		return countComplete
+	}
+}
+
+// issueCountNote renders the one-line note for a count verdict (empty for an
+// unknown count). label is e.g. `series "Saga (2014)"`.
+func issueCountNote(label string, v seriesCountVerdict, localDistinct, reported int) string {
+	switch v {
+	case countOver:
+		return fmt.Sprintf("%s: %d local issue(s) exceed the %d on record — likely the wrong series or oddly-split files", label, localDistinct, reported)
+	case countIncomplete:
+		return fmt.Sprintf("%s: have %d of %d issue(s); series is incomplete locally", label, localDistinct, reported)
+	case countComplete:
+		return fmt.Sprintf("%s: %d of %d issue(s); series complete", label, localDistinct, reported)
+	default:
+		return ""
+	}
+}
+
+// distinctNumbers counts the distinct canonical issue numbers among parsed
+// filenames. Files without a parsable number don't count toward the total, and
+// variants/duplicates of the same number count once — so the figure reflects
+// distinct issues, not file count.
+func distinctNumbers(parsed []filename.ParsedName) int {
+	seen := make(map[string]struct{}, len(parsed))
+	for _, p := range parsed {
+		if p.Number != "" {
+			seen[canonNumber(p.Number)] = struct{}{}
+		}
+	}
+	return len(seen)
+}
+
+// canonNumber canonicalizes an issue number for matching a filename's number
+// against a provider's: leading zeros are stripped from plain integers ("001" ->
+// "1"), decimals and alphanumeric suffixes are kept but lowercased ("1.MU" ->
+// "1.mu"). It mirrors filename.Parse's number normalization.
+func canonNumber(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if !strings.ContainsRune(s, '.') {
+		if n, err := strconv.Atoi(s); err == nil {
+			return strconv.Itoa(n)
+		}
+	}
+	return strings.ToLower(s)
 }
 
 // printDryRun prints the resolved ComicInfo without writing it.

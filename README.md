@@ -100,8 +100,10 @@ instead (no network or credentials needed).
 cb tag comic.cbz                  # auto-match from the filename, then write
 cb tag --dry-run comic.cbz        # resolve + print, don't write
 cb tag --id <issueID> comic.cbz   # exact provider lookup, no matching
+cb tag --series-id <id> ./run/    # pin a directory to a known series; match by number
 cb tag --pick comic.cbz           # force the series picker
 cb tag --refresh comic.cbz        # ignore cached responses, refetch fresh
+cb tag -v ./library/              # verbose: show the series grouping tree + candidates
 cb tag ./library/                 # batch: auto-match every .cbz, skip the unsure
 cb tag -m comic.cbz               # type the fields (Series/Number pre-filled)
 cb tag -m ./squirrel-man/         # one series: prompt shared fields once
@@ -111,6 +113,29 @@ Online matching parses the filename (series, number, year, edition), resolves
 the series by exact name with a year tiebreak, then fetches the issue by number —
 hands-off when unambiguous, a picker when not. `PageCount` is always taken from
 the archive, never the provider.
+
+For a directory, files are **grouped by series** and each series is resolved
+**once**; a group that can't be matched is skipped with a single message instead
+of probing every issue, and a mixed directory (several series) resolves each
+group independently. Before tagging a group, cb verifies the local issue count
+against the provider's: fewer locally just notes the run is incomplete, but **more
+issues locally than the series has on record** is treated as a likely wrong-series
+/ mis-split signal and the group is refused rather than mis-tagged (only distinct
+issue numbers count, so variants don't trip it). `--series-id` applies the same
+verification.
+
+Add `-v`/`--verbose` to preview the plan before anything is written: it prints a
+tree of how the local files grouped into series (with each file's parsed issue
+number), then, as each series resolves, the candidates it matched and the
+complete/incomplete/over verdict. `--series-id` shows the same per-file tree,
+marking each as *in series*, *not in series*, or *no number parsed*.
+
+When you already know the series (its ID is in the provider URL, e.g.
+`metron.cloud/series/aliens-vampirella-2015/` → `14195`), `--series-id` skips
+name-matching entirely: it lists the series' issues once, then matches every file
+in the directory by its issue number. That removes all fuzzy guesswork and is the
+fewest API calls (one list call plus one per matched file). Files whose number
+isn't in the series are reported and skipped, never mis-tagged.
 
 Responses are cached on disk under `$XDG_CACHE_HOME/cb/` (or `~/.cache/cb/`) for
 24h, so repeat and batch runs are fast and easy on the API. The cache is safe to

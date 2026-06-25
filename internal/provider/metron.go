@@ -363,6 +363,60 @@ func (m *metron) IssueByNumber(ctx context.Context, seriesID, number string) (*c
 	return m.IssueByID(ctx, strconv.Itoa(list.Results[0].ID))
 }
 
+// maxIssueListPages caps how many list pages ListIssues will walk, as a safety
+// valve so a malformed/non-clearing "next" can never loop forever. Metron pages
+// ~28 issues each, so this still covers series of several thousand issues.
+const maxIssueListPages = 200
+
+// ListIssues implements SeriesIssueLister: it returns every issue in a series as
+// a (number, id) stub. It pages by constructing its own ?page=N requests rather
+// than following the server-supplied "next" URL — we never fetch an arbitrary
+// URL handed back in a response body; every request is built from our validated
+// base URL, which keeps the auth header scoped to metron.cloud and removes any
+// open-redirect/SSRF surface. Each page is cached like any other GET.
+func (m *metron) ListIssues(ctx context.Context, seriesID string) ([]IssueStub, error) {
+	// seriesID flows into a query parameter; constrain it to a positive integer
+	// (Metron IDs are integers) so a typo or hostile value can't be smuggled in.
+	if !isPositiveIntID(seriesID) {
+		return nil, fmt.Errorf("metron: invalid series id %q: %w", seriesID, ErrNotFound)
+	}
+	var out []IssueStub
+	for page := 1; page <= maxIssueListPages; page++ {
+		q := url.Values{}
+		q.Set("series_id", seriesID)
+		if page > 1 {
+			q.Set("page", strconv.Itoa(page))
+		}
+		var list struct {
+			Next    string `json:"next"`
+			Results []struct {
+				ID     int    `json:"id"`
+				Number string `json:"number"`
+			} `json:"results"`
+		}
+		if err := m.get(ctx, "/issue/", q, &list); err != nil {
+			return nil, err
+		}
+		for _, r := range list.Results {
+			out = append(out, IssueStub{ID: strconv.Itoa(r.ID), Number: r.Number})
+		}
+		if list.Next == "" {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("metron: series %s has no issues: %w", seriesID, ErrNotFound)
+	}
+	return out, nil
+}
+
+// isPositiveIntID reports whether s is a base-10 positive integer, the form of a
+// Metron series/issue ID. Used to validate IDs before they reach a query.
+func isPositiveIntID(s string) bool {
+	n, err := strconv.Atoi(s)
+	return err == nil && n > 0
+}
+
 func (m *metron) IssueByID(ctx context.Context, issueID string) (*comicinfo.ComicInfo, error) {
 	var iss metronIssue
 	if err := m.get(ctx, fmt.Sprintf("/issue/%s/", url.PathEscape(issueID)), nil, &iss); err != nil {

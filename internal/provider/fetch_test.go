@@ -97,3 +97,60 @@ func TestGetCachesIdenticalRequests(t *testing.T) {
 		t.Errorf("server hits = %d, want 1 (identical request should be cached)", got)
 	}
 }
+
+func TestListIssuesPaginates(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		// The series_id filter must always be present; pagination is driven by
+		// our own ?page=N, never by following the server's "next" URL.
+		if got := r.URL.Query().Get("series_id"); got != "42" {
+			t.Errorf("series_id = %q, want 42", got)
+		}
+		switch r.URL.Query().Get("page") {
+		case "", "1":
+			// A non-empty "next" (an absolute, even off-host URL) must NOT be
+			// fetched by the client; it should page via ?page=2 instead.
+			w.Write([]byte(`{"next":"https://evil.example/api/issue/?page=2","results":[{"id":1,"number":"1"},{"id":2,"number":"2"}]}`))
+		case "2":
+			w.Write([]byte(`{"next":"","results":[{"id":3,"number":"3"}]}`))
+		default:
+			t.Errorf("unexpected page %q", r.URL.Query().Get("page"))
+		}
+	}))
+	defer srv.Close()
+
+	m := newTestMetron(srv)
+	stubs, err := m.ListIssues(context.Background(), "42")
+	if err != nil {
+		t.Fatalf("ListIssues: %v", err)
+	}
+	if len(stubs) != 3 {
+		t.Fatalf("got %d stubs, want 3: %+v", len(stubs), stubs)
+	}
+	if stubs[0].ID != "1" || stubs[2].Number != "3" {
+		t.Errorf("unexpected stubs: %+v", stubs)
+	}
+	if got := hits.Load(); got != 2 {
+		t.Errorf("server hits = %d, want 2 (two pages)", got)
+	}
+}
+
+func TestListIssuesRejectsInvalidID(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Write([]byte(`{"next":"","results":[]}`))
+	}))
+	defer srv.Close()
+
+	m := newTestMetron(srv)
+	for _, bad := range []string{"", "0", "-1", "12abc", "1 OR 1=1"} {
+		if _, err := m.ListIssues(context.Background(), bad); err == nil {
+			t.Errorf("ListIssues(%q) = nil error, want rejection", bad)
+		}
+	}
+	if got := hits.Load(); got != 0 {
+		t.Errorf("server hits = %d, want 0 (invalid IDs must never reach the network)", got)
+	}
+}

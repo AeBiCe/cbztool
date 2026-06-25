@@ -56,6 +56,25 @@ type Provider interface {
 	IssueByID(ctx context.Context, issueID string) (*comicinfo.ComicInfo, error)
 }
 
+// IssueStub is a lightweight issue identifier from a series listing: just
+// enough to match a filename's issue number to a provider issue ID, without the
+// cost (or detail) of a full issue fetch. Resolve the full metadata by passing
+// ID to IssueByID.
+type IssueStub struct {
+	ID     string // provider issue ID
+	Number string // issue number as the provider records it (e.g. "1", "1.MU")
+}
+
+// SeriesIssueLister is an optional Provider capability: enumerate every issue of
+// a series in one (internally paginated) pass. The command layer uses it for
+// `cb tag --series-id`, which pins a directory to a known series and matches
+// each file by its parsed issue number — one list call plus one detail per
+// matched file, with no name-search or fuzzy matching at all. Backends that
+// cannot enumerate a series simply don't implement it.
+type SeriesIssueLister interface {
+	ListIssues(ctx context.Context, seriesID string) ([]IssueStub, error)
+}
+
 // CacheControl is an optional capability of a Provider that keeps a persistent
 // on-disk response cache. The command layer type-asserts to it to honor
 // `cb tag --refresh`, which bypasses cached reads for one run (and repopulates

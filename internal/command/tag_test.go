@@ -93,3 +93,67 @@ func TestMatchKey(t *testing.T) {
 		t.Errorf("matchKey collapsed distinct names")
 	}
 }
+
+func TestCanonNumber(t *testing.T) {
+	same := [][2]string{
+		{"001", "1"},     // filename zero-pad vs provider bare integer
+		{"05", "5"},      // ditto
+		{" 5 ", "5"},     // surrounding whitespace
+		{"1.MU", "1.mu"}, // alphanumeric suffix, case-folded
+	}
+	for _, p := range same {
+		if canonNumber(p[0]) != canonNumber(p[1]) {
+			t.Errorf("canonNumber(%q)=%q != canonNumber(%q)=%q", p[0], canonNumber(p[0]), p[1], canonNumber(p[1]))
+		}
+	}
+	// Decimals are not integers: 1 and 1.5 must stay distinct.
+	if canonNumber("1") == canonNumber("1.5") {
+		t.Errorf("canonNumber collapsed 1 and 1.5")
+	}
+}
+
+func TestClassifyIssueCount(t *testing.T) {
+	cases := []struct {
+		local, reported int
+		want            seriesCountVerdict
+	}{
+		{0, 0, countUnknown},  // provider reported nothing
+		{3, 0, countUnknown},  // ditto, even with local files
+		{6, 6, countComplete}, // full run
+		{3, 800, countIncomplete},
+		{7, 6, countOver}, // more local than the series has
+	}
+	for _, c := range cases {
+		if got := classifyIssueCount(c.local, c.reported); got != c.want {
+			t.Errorf("classifyIssueCount(%d,%d)=%v, want %v", c.local, c.reported, got, c.want)
+		}
+	}
+}
+
+func TestGroupBySeries(t *testing.T) {
+	files := []string{
+		"Batman 001 (2011).cbz",
+		"Batman 002 (2011).cbz",
+		"Batman 002 (2011) (variant).cbz", // same number, must not inflate distinct count
+		"Superman 003.cbz",
+		"003.cbz", // no series -> ungroupable
+	}
+	groups, ungroupable := groupBySeries(files)
+	if len(groups) != 2 {
+		t.Fatalf("got %d groups, want 2 (Batman, Superman)", len(groups))
+	}
+	if len(ungroupable) != 1 {
+		t.Errorf("got %d ungroupable, want 1", len(ungroupable))
+	}
+	// Group order is first-seen.
+	if groups[0].display != "Batman" || len(groups[0].files) != 3 {
+		t.Errorf("group 0 = %q with %d files, want Batman with 3", groups[0].display, len(groups[0].files))
+	}
+	// The variant shares number 2, so Batman has 2 distinct numbers, not 3.
+	if n := distinctNumbers(groups[0].parsed); n != 2 {
+		t.Errorf("Batman distinct numbers = %d, want 2", n)
+	}
+	if groups[0].repYear() != 2011 {
+		t.Errorf("Batman repYear = %d, want 2011", groups[0].repYear())
+	}
+}
