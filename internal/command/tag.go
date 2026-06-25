@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"cb/internal/archive"
 	"cb/internal/comicinfo"
@@ -31,9 +32,11 @@ func Tag(args []string) error {
 	manual := fs.Bool("manual", false, "prompt for fields instead of fetching online")
 	fs.BoolVar(manual, "m", false, "shorthand for --manual")
 	refresh := fs.Bool("refresh", false, "ignore cached API responses and refetch (online)")
+	verbose := fs.Bool("verbose", false, "show parsed fields and every series candidate the provider returned")
+	fs.BoolVar(verbose, "v", false, "shorthand for --verbose")
 	_ = fs.Parse(args)
 	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: cb tag [--manual] [--id <issueID>] [--dry-run] [--force] [--pick] [--refresh] <path>")
+		return fmt.Errorf("usage: cb tag [--manual] [--id <issueID>] [--dry-run] [--force] [--pick] [--refresh] [-v] <path>")
 	}
 	target := fs.Arg(0)
 
@@ -67,9 +70,9 @@ func Tag(args []string) error {
 		return err
 	}
 	if info.IsDir() {
-		return tagDirOnline(prov, target, *dryRun, *force, *id)
+		return tagDirOnline(prov, target, *dryRun, *force, *id, *verbose)
 	}
-	return tagFileOnline(prov, target, *id, *dryRun, *force, *pick)
+	return tagFileOnline(prov, target, *id, *dryRun, *force, *pick, *verbose)
 }
 
 // openProvider loads config and builds the configured online provider. When
@@ -95,7 +98,7 @@ func openProvider(refresh bool) (provider.Provider, error) {
 // --- online tagging (formerly `cb fetch`) ---
 
 // tagFileOnline resolves and writes (or dry-run prints) metadata for one archive.
-func tagFileOnline(prov provider.Provider, path, id string, dryRun, force, pick bool) error {
+func tagFileOnline(prov provider.Provider, path, id string, dryRun, force, pick, verbose bool) error {
 	a, err := archive.Open(path)
 	if err != nil {
 		return err
@@ -116,7 +119,7 @@ func tagFileOnline(prov provider.Provider, path, id string, dryRun, force, pick 
 	if id != "" {
 		ci, err = prov.IssueByID(ctx, id)
 	} else {
-		ci, err = resolveFromFilename(ctx, prov, path, pick)
+		ci, err = resolveFromFilename(ctx, prov, path, pick, verbose)
 	}
 	if err != nil {
 		return err
@@ -132,7 +135,7 @@ func tagFileOnline(prov provider.Provider, path, id string, dryRun, force, pick 
 // tagDirOnline processes every .cbz in a directory non-interactively: it
 // auto-matches each file and skips (without prompting) anything it can't
 // confidently resolve, so one ambiguous file never blocks the batch.
-func tagDirOnline(prov provider.Provider, dir string, dryRun, force bool, id string) error {
+func tagDirOnline(prov provider.Provider, dir string, dryRun, force bool, id string, verbose bool) error {
 	if id != "" {
 		return fmt.Errorf("tag: --id cannot be combined with a directory")
 	}
@@ -159,7 +162,7 @@ func tagDirOnline(prov provider.Provider, dir string, dryRun, force bool, id str
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-		ci, matched, rerr := autoResolve(ctx, prov, f)
+		ci, matched, rerr := autoResolve(ctx, prov, f, verbose)
 		cancel()
 		if rerr != nil {
 			// A clean "no match" is a skip, not a failure — one missing issue
@@ -203,9 +206,12 @@ func tagDirOnline(prov provider.Provider, dir string, dryRun, force bool, id str
 // filename to yield a series and number, and the series to auto-match uniquely.
 // matched=false (with a nil error) means "couldn't confidently resolve" — the
 // caller should skip rather than abort.
-func autoResolve(ctx context.Context, prov provider.Provider, path string) (ci *comicinfo.ComicInfo, matched bool, err error) {
+func autoResolve(ctx context.Context, prov provider.Provider, path string, verbose bool) (ci *comicinfo.ComicInfo, matched bool, err error) {
 	parsed := filename.Parse(path)
 	if parsed.Series == "" || parsed.Number == "" {
+		if verbose {
+			fmt.Printf("[verbose] %s\n[verbose]   parsed: series=%q number=%q — incomplete, cannot auto-match\n", path, parsed.Series, parsed.Number)
+		}
 		return nil, false, nil
 	}
 	results, err := prov.SearchSeries(ctx, parsed.Series)
@@ -214,6 +220,13 @@ func autoResolve(ctx context.Context, prov provider.Provider, path string) (ci *
 	}
 	results = preferEdition(results, parsed.Series)
 	s, ok := bestSeriesMatch(results, parsed.Series, parsed.Year)
+	if verbose {
+		var picked *provider.SeriesResult
+		if ok {
+			picked = &s
+		}
+		printSearchDiagnostics(path, parsed, results, picked)
+	}
 	if !ok {
 		return nil, false, nil
 	}
@@ -240,7 +253,7 @@ func printDryRun(path, providerName string, ci *comicinfo.ComicInfo) error {
 // as a tiebreaker) uniquely identify a result, it is auto-selected with no
 // prompt; if the issue number was also parsed, the whole tag is hands-off.
 // Otherwise the user picks from the candidates. force (--pick) always prompts.
-func resolveFromFilename(ctx context.Context, prov provider.Provider, path string, force bool) (*comicinfo.ComicInfo, error) {
+func resolveFromFilename(ctx context.Context, prov provider.Provider, path string, force, verbose bool) (*comicinfo.ComicInfo, error) {
 	parsed := filename.Parse(path)
 	p := newPrompter()
 
@@ -263,6 +276,10 @@ func resolveFromFilename(ctx context.Context, prov provider.Provider, path strin
 		return nil, fmt.Errorf("no series found for %q", name)
 	}
 	results = preferEdition(results, name)
+
+	if verbose {
+		printSearchDiagnostics(path, parsed, results, nil)
+	}
 
 	if !force {
 		if s, ok := bestSeriesMatch(results, name, parsed.Year); ok {
@@ -303,16 +320,71 @@ func resolveIssue(ctx context.Context, prov provider.Provider, p *prompter, seri
 	return prov.IssueByNumber(ctx, series.ID, number)
 }
 
+// printSearchDiagnostics dumps, under -v/--verbose, what a filename parsed to
+// and every series candidate the provider returned, marking the auto-matched
+// one (if any) with "=>". It lets the user see why an auto-match did or did not
+// happen — e.g. an ambiguous name, a year mismatch, or no exact-name match.
+func printSearchDiagnostics(path string, parsed filename.ParsedName, results []provider.SeriesResult, picked *provider.SeriesResult) {
+	fmt.Printf("[verbose] %s\n", path)
+	fmt.Printf("[verbose]   parsed: series=%q number=%q year=%d vol=%d\n", parsed.Series, parsed.Number, parsed.Year, parsed.Volume)
+	fmt.Printf("[verbose]   %d series candidate(s) returned for %q:\n", len(results), parsed.Series)
+	for _, s := range results {
+		mark := "  "
+		if picked != nil && s.ID == picked.ID {
+			mark = "=>"
+		}
+		fmt.Printf("[verbose]   %s %s [%d issues] id=%s\n", mark, seriesLabel(s), s.IssueCount, s.ID)
+	}
+	if picked == nil {
+		fmt.Printf("[verbose]   no confident auto-match (need exactly one exact-name candidate%s)\n",
+			yearHint(parsed.Year))
+	}
+}
+
+// yearHint notes that the parsed year is used as a tiebreaker, for the verbose
+// "no confident auto-match" explanation.
+func yearHint(year int) string {
+	if year > 0 {
+		return fmt.Sprintf(", or one matching year %d", year)
+	}
+	return ""
+}
+
 // exactNameMatches returns the results whose series name (ignoring a trailing
-// "(year)" in the display string) equals name, case-insensitively.
+// "(year)" in the display string) matches name once separator punctuation and
+// case are normalized away (see matchKey).
 func exactNameMatches(results []provider.SeriesResult, name string) []provider.SeriesResult {
+	key := matchKey(name)
 	var out []provider.SeriesResult
 	for _, s := range results {
-		if strings.EqualFold(stripYearSuffix(s.Name), name) {
+		if matchKey(stripYearSuffix(s.Name)) == key {
 			out = append(out, s)
 		}
 	}
 	return out
+}
+
+// matchKey reduces a series name to a comparison key: it lowercases and
+// collapses every run of non-alphanumeric characters (spaces, "/", "-", ":",
+// "&", etc.) into a single space, trimming the ends. This lets a filename's
+// bare "Aliens Vampirella" match a provider's "Aliens / Vampirella", or
+// "Spider-Man" match "Spider Man", without resorting to fuzzy scoring. It is
+// Unicode-aware so accented and non-Latin titles compare correctly.
+func matchKey(s string) string {
+	var b strings.Builder
+	pendingSpace := false
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			if pendingSpace && b.Len() > 0 {
+				b.WriteByte(' ')
+			}
+			pendingSpace = false
+			b.WriteRune(unicode.ToLower(r))
+		} else {
+			pendingSpace = true
+		}
+	}
+	return b.String()
 }
 
 // bestSeriesMatch auto-selects a single series when the name — and, as a

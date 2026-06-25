@@ -74,7 +74,7 @@ func Pack(args []string) error {
 	if err != nil {
 		return err
 	}
-	return tagFileOnline(prov, out, "", false, true, false)
+	return tagFileOnline(prov, out, "", false, true, false, false)
 }
 
 // collectImages reads the (non-recursive) image files in dir into an entry map

@@ -67,4 +67,29 @@ func TestBestSeriesMatch(t *testing.T) {
 	if s, ok := bestSeriesMatch(one, "Saga", 0); !ok || s.ID != "1" {
 		t.Errorf("bestSeriesMatch single = %+v ok=%v, want id 1", s, ok)
 	}
+
+	// Separator punctuation in the provider's name must not defeat a match: a
+	// filename's bare "Aliens Vampirella" should resolve "Aliens / Vampirella".
+	sep := []provider.SeriesResult{{ID: "14195", Name: "Aliens / Vampirella (2015)", StartYear: 2015}}
+	if s, ok := bestSeriesMatch(sep, "Aliens Vampirella", 2015); !ok || s.ID != "14195" {
+		t.Errorf("bestSeriesMatch separator-insensitive = %+v ok=%v, want id 14195", s, ok)
+	}
+}
+
+func TestMatchKey(t *testing.T) {
+	cases := []struct{ a, b string }{
+		{"Aliens / Vampirella", "Aliens Vampirella"},
+		{"Spider-Man", "Spider Man"},
+		{"X-Men: Blue", "X Men Blue"},
+		{"  Saga  ", "saga"},
+	}
+	for _, c := range cases {
+		if matchKey(c.a) != matchKey(c.b) {
+			t.Errorf("matchKey(%q)=%q != matchKey(%q)=%q", c.a, matchKey(c.a), c.b, matchKey(c.b))
+		}
+	}
+	// Distinct names must stay distinct.
+	if matchKey("Aliens") == matchKey("Aliens Vampirella") {
+		t.Errorf("matchKey collapsed distinct names")
+	}
 }
