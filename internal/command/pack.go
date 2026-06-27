@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"cb/internal/archive"
+	"cb/internal/provider"
 )
 
 // Pack implements `cb pack [--force] [--tag] [--manual] <dir>`: build a new .cbz
@@ -74,7 +75,7 @@ func Pack(args []string) error {
 	if err != nil {
 		return err
 	}
-	return tagFileOnline(prov, out, "", false, true, false, false)
+	return tagFileOnline([]provider.Provider{prov}, out, "", false, true, false, false)
 }
 
 // collectImages reads the (non-recursive) image files in dir into an entry map

@@ -82,15 +82,17 @@ func LoadConfig() (*Config, error) {
 	if v := os.Getenv("CB_COMICVINE_API_KEY"); v != "" {
 		cfg.ComicVine.APIKey = v
 	}
+	cfg.Provider = CanonicalProvider(cfg.Provider)
 	if cfg.Provider == "" {
 		cfg.Provider = "metron"
 	}
 	return cfg, nil
 }
 
-// providerConfig returns the credentials block for the named provider.
+// providerConfig returns the credentials block for the named provider (aliases
+// accepted).
 func (c *Config) providerConfig(name string) ProviderConfig {
-	switch name {
+	switch CanonicalProvider(name) {
 	case "comicvine":
 		return c.ComicVine
 	default:

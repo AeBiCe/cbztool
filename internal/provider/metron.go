@@ -122,27 +122,41 @@ func (m *metron) cachePut(u string, body []byte) {
 	m.cache[u] = body
 }
 
-// fetch issues the GET with rate-limiting and returns the raw 200 body. It
-// retries on throttling (429/403), 5xx, and transient network errors, honoring
-// a Retry-After header (or the throttle body's "available in N seconds") and
-// otherwise backing off exponentially with jitter. It stops at the context
-// deadline or after maxAttempts.
+// fetch issues an authenticated GET with rate-limiting and returns the raw 200
+// body. The retry/backoff machinery is shared with other REST backends via
+// apiGet; metron only contributes its HTTP Basic credentials.
 func (m *metron) fetch(ctx context.Context, u, path string) ([]byte, error) {
+	return apiGet(ctx, "metron", m.http, m.limiter, u, path, func(req *http.Request) {
+		req.SetBasicAuth(m.user, m.pass)
+	})
+}
+
+// apiGet performs a rate-limited GET of u for backend `name` and returns the raw
+// 200 body. It retries on throttling (429/403), 5xx, and transient network
+// errors, honoring a Retry-After header (or a DRF throttle body's "available in
+// N seconds") and otherwise backing off exponentially with jitter; it stops at
+// the context deadline or after maxAttempts. Accept and User-Agent are always
+// set; decorate adds per-backend headers (e.g. Basic auth) and may be nil for
+// backends that authenticate via a query parameter. label names the endpoint in
+// errors. apiGet neither caches nor decodes — callers layer that on top.
+func apiGet(ctx context.Context, name string, client *http.Client, limiter *rateLimiter, u, label string, decorate func(*http.Request)) ([]byte, error) {
 	var lastErr error
 	throttled := false
 	for attempt := range maxAttempts {
-		if err := m.limiter.wait(ctx); err != nil {
+		if err := limiter.wait(ctx); err != nil {
 			return nil, err
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 		if err != nil {
 			return nil, err
 		}
-		req.SetBasicAuth(m.user, m.pass)
 		req.Header.Set("Accept", "application/json")
 		req.Header.Set("User-Agent", userAgent)
+		if decorate != nil {
+			decorate(req)
+		}
 
-		resp, err := m.http.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			// Transient network error: back off and retry.
 			lastErr = err
@@ -160,7 +174,7 @@ func (m *metron) fetch(ctx context.Context, u, path string) ([]byte, error) {
 
 		case resp.StatusCode == http.StatusUnauthorized:
 			resp.Body.Close()
-			return nil, fmt.Errorf("metron: unauthorized (check credentials)")
+			return nil, fmt.Errorf("%s: unauthorized (check credentials)", name)
 
 		case resp.StatusCode == http.StatusTooManyRequests ||
 			resp.StatusCode == http.StatusForbidden ||
@@ -172,7 +186,7 @@ func (m *metron) fetch(ctx context.Context, u, path string) ([]byte, error) {
 				wait = throttleBodyWait(peek)
 			}
 			resp.Body.Close()
-			lastErr = fmt.Errorf("metron: GET %s: %s", path, resp.Status)
+			lastErr = fmt.Errorf("%s: GET %s: %s", name, label, resp.Status)
 			if attempt == maxAttempts-1 {
 				break
 			}
@@ -183,13 +197,13 @@ func (m *metron) fetch(ctx context.Context, u, path string) ([]byte, error) {
 
 		default:
 			resp.Body.Close()
-			return nil, fmt.Errorf("metron: GET %s: %s", path, resp.Status)
+			return nil, fmt.Errorf("%s: GET %s: %s", name, label, resp.Status)
 		}
 	}
 	if throttled {
-		return nil, fmt.Errorf("metron: still throttled after %d attempts: %v — try again later or lower your request rate", maxAttempts, lastErr)
+		return nil, fmt.Errorf("%s: still throttled after %d attempts: %v — try again later or lower your request rate", name, maxAttempts, lastErr)
 	}
-	return nil, fmt.Errorf("metron: giving up after %d attempts: %w", maxAttempts, lastErr)
+	return nil, fmt.Errorf("%s: giving up after %d attempts: %w", name, maxAttempts, lastErr)
 }
 
 // retryAfter parses a Retry-After header, which may be either a number of
@@ -457,34 +471,46 @@ func metronIssueToComicInfo(iss *metronIssue) *comicinfo.ComicInfo {
 // assignCredits maps Metron credit roles onto the ComicInfo creator fields,
 // accumulating multiple names per role as a comma-separated list.
 func assignCredits(ci *comicinfo.ComicInfo, credits []metronCredit) {
-	add := func(dst *string, name string) {
-		if *dst == "" {
-			*dst = name
-		} else {
-			*dst += ", " + name
-		}
-	}
 	for _, c := range credits {
 		for _, r := range c.Role {
-			switch strings.ToLower(strings.TrimSpace(r.Name)) {
-			case "writer", "script", "story":
-				add(&ci.Writer, c.Creator)
-			case "penciller", "penciler", "pencils", "artist":
-				add(&ci.Penciller, c.Creator)
-			case "inker", "inks":
-				add(&ci.Inker, c.Creator)
-			case "colorist", "colourist", "colors", "colours":
-				add(&ci.Colorist, c.Creator)
-			case "letterer", "letters":
-				add(&ci.Letterer, c.Creator)
-			case "cover", "cover artist":
-				add(&ci.CoverArtist, c.Creator)
-			case "editor":
-				add(&ci.Editor, c.Creator)
-			case "translator":
-				add(&ci.Translator, c.Creator)
-			}
+			applyCredit(ci, r.Name, c.Creator)
 		}
+	}
+}
+
+// applyCredit routes one (role, creator) pair onto the matching ComicInfo
+// creator field, appending to any names already there. It is shared by the
+// Metron and ComicVine backends so role mapping stays identical across sources;
+// unknown roles and blank creators are ignored.
+func applyCredit(ci *comicinfo.ComicInfo, role, creator string) {
+	creator = strings.TrimSpace(creator)
+	if creator == "" {
+		return
+	}
+	add := func(dst *string) {
+		if *dst == "" {
+			*dst = creator
+		} else {
+			*dst += ", " + creator
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "writer", "script", "story":
+		add(&ci.Writer)
+	case "penciller", "penciler", "pencils", "artist":
+		add(&ci.Penciller)
+	case "inker", "inks":
+		add(&ci.Inker)
+	case "colorist", "colourist", "colors", "colours":
+		add(&ci.Colorist)
+	case "letterer", "letters":
+		add(&ci.Letterer)
+	case "cover", "cover artist":
+		add(&ci.CoverArtist)
+	case "editor":
+		add(&ci.Editor)
+	case "translator":
+		add(&ci.Translator)
 	}
 }
 

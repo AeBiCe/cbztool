@@ -11,6 +11,10 @@ config.json
 # Personal scratch
 /session
 
+# Nix
+/result
+/result-*
+
 # Devenv
 .devenv*
 devenv.local.nix

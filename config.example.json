@@ -3,5 +3,8 @@
   "metron": {
     "username": "YOUR_METRON_USERNAME",
     "password": "YOUR_METRON_PASSWORD"
+  },
+  "comicvine": {
+    "api_key": "YOUR_COMICVINE_API_KEY"
   }
 }

@@ -50,9 +50,10 @@ Online tagging needs provider credentials — see [Configuration](#configuration
 - **Authoring** — `pack` turns a directory of images into a valid `.cbz`.
 - **Validation** — detect missing, duplicate, or unnumbered pages.
 - **Metadata** — read, write, and remove the full ComicInfo v2.1 schema.
-- **Online tagging** — pull rich metadata from a provider (Metron today) with
-  accurate, ID-based matching and edition awareness (TPB/HC/GN/…), single files
-  or whole directories.
+- **Online tagging** — pull rich metadata from a provider (**Metron** or
+  **ComicVine**) with accurate, ID-based matching and edition awareness
+  (TPB/HC/GN/…), single files or whole directories. Pick a provider per run, or
+  let one fall back to the other.
 
 ## Usage guide
 
@@ -99,6 +100,8 @@ instead (no network or credentials needed).
 ```sh
 cb tag comic.cbz                  # auto-match from the filename, then write
 cb tag --dry-run comic.cbz        # resolve + print, don't write
+cb tag -p comicvine comic.cbz     # choose the provider (alias: -p cv); default is metron
+cb tag --fallback cv ./library/   # try metron, fall back to comicvine on a miss
 cb tag --id <issueID> comic.cbz   # exact provider lookup, no matching
 cb tag --series-id <id> ./run/    # pin a directory to a known series; match by number
 cb tag --pick comic.cbz           # force the series picker
@@ -135,7 +138,44 @@ When you already know the series (its ID is in the provider URL, e.g.
 name-matching entirely: it lists the series' issues once, then matches every file
 in the directory by its issue number. That removes all fuzzy guesswork and is the
 fewest API calls (one list call plus one per matched file). Files whose number
-isn't in the series are reported and skipped, never mis-tagged.
+isn't in the series are reported and skipped, never mis-tagged. The id is the
+provider's series identifier — a Metron *series* id or a ComicVine *volume* id
+(e.g. `comicvine.gamespot.com/<slug>/4050-160423/` → `160423`).
+
+#### Choosing a provider
+
+cb supports two metadata sources: **Metron** (the default) and **ComicVine**.
+Select one for a run with `-p`/`--provider`; the aliases `mt` and `cv` are
+accepted everywhere a provider name is (flag, `config.json`, or `CB_PROVIDER`):
+
+```sh
+cb tag -p comicvine comic.cbz     # or: -p cv
+cb tag -p metron    ./library/    # or: -p mt   (also the default)
+```
+
+To widen coverage without switching by hand, add `--fallback <provider>`: cb
+resolves on the primary and, **only when the primary cleanly finds no match**,
+retries the search on the fallback. It never falls back on a network or auth
+error (that would mask a real problem), and it's reported plainly — a run summary
+reads `done: 5 resolved (2 via comicvine), …`, and `-v` tags the source of each
+group.
+
+```sh
+cb tag --fallback comicvine ./library/   # metron first, comicvine on a miss
+```
+
+Fallback is name-search recovery, so it doesn't apply to the ID-based lookups
+`--id` and `--series-id` (an issue/series id belongs to one specific provider);
+combining them is rejected. The fallback provider must be configured, just like
+the primary.
+
+Matching is identical across providers and deliberately **not** fuzzy: cb uses a
+provider's search only to *gather* candidates, then accepts one only on an exact,
+punctuation-normalized name match (with the filename's year as a tiebreaker among
+equals). A near-miss is skipped, never guessed — the safeguard that keeps cb from
+the mistagging that fuzzy taggers are prone to. A few fields differ by source
+(ComicVine has no age rating or barcode, and fills Publisher from the series, not
+the issue); `PageCount` always comes from the archive regardless.
 
 Responses are cached on disk under `$XDG_CACHE_HOME/cb/` (or `~/.cache/cb/`) for
 24h, so repeat and batch runs are fast and easy on the API. The cache is safe to
@@ -154,13 +194,25 @@ chmod 600 "${XDG_CONFIG_HOME:-$HOME/.config}/cb/config.json"   # it holds secret
 $EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/cb/config.json"
 ```
 
+The file holds one block per provider; you only need credentials for the
+provider(s) you actually use (cb validates them when it builds that provider, so
+an unconfigured backend only matters if you select it or fall back to it):
+
+- **Metron** — a free account at [metron.cloud](https://metron.cloud/); set
+  `metron.username` / `metron.password`.
+- **ComicVine** — a free API key from
+  [comicvine.gamespot.com/api](https://comicvine.gamespot.com/api/); set
+  `comicvine.api_key`.
+
 Or use environment variables, which override the file (so nothing sensitive needs
 to sit on disk):
 
 ```sh
-export CB_PROVIDER=metron
+export CB_PROVIDER=metron            # or comicvine (aliases mt / cv accepted)
 export CB_METRON_USERNAME=you
 export CB_METRON_PASSWORD=secret
+export CB_COMICVINE_API_KEY=...
 ```
 
-Metron is the default backend. Huge thanks to Metron for their awesome API (https://metron.cloud/).
+Metron is the default backend. Huge thanks to Metron (https://metron.cloud/) and
+ComicVine (https://comicvine.gamespot.com/) for their APIs.

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"cb/internal/comicinfo"
 )
@@ -95,18 +96,39 @@ type ProviderConfig struct {
 // providerFactory builds a configured Provider from its settings.
 type providerFactory func(cfg ProviderConfig) (Provider, error)
 
-// providers is the registry of known backends, keyed by Name(). Backends
-// register themselves via registerProvider; selection is driven by config.
+// providers is the registry of known backends, keyed by canonical Name().
+// Backends register themselves via registerProvider; selection is driven by
+// config.
 var providers = map[string]providerFactory{}
 
 // registerProvider adds a backend factory to the registry.
 func registerProvider(name string, f providerFactory) { providers[name] = f }
 
-// New builds the Provider named by cfg.Provider using its credentials block.
+// providerAliases maps short aliases to canonical provider names, so a user can
+// write `-p cv` / `-p mt` (or the same in config.json / CB_PROVIDER).
+var providerAliases = map[string]string{
+	"mt": "metron",
+	"cv": "comicvine",
+}
+
+// CanonicalProvider resolves a provider name or alias to its canonical form
+// (trimmed and lowercased). An unrecognized name is returned as-is so New can
+// report it as unknown.
+func CanonicalProvider(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if canon, ok := providerAliases[name]; ok {
+		return canon
+	}
+	return name
+}
+
+// New builds the Provider named by cfg.Provider (aliases accepted) using that
+// backend's credentials block.
 func New(cfg *Config) (Provider, error) {
-	factory, ok := providers[cfg.Provider]
+	name := CanonicalProvider(cfg.Provider)
+	factory, ok := providers[name]
 	if !ok {
 		return nil, fmt.Errorf("unknown provider %q (configure one in config.json or CB_PROVIDER)", cfg.Provider)
 	}
-	return factory(cfg.providerConfig(cfg.Provider))
+	return factory(cfg.providerConfig(name))
 }
