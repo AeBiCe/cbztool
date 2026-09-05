@@ -28,12 +28,15 @@ var bidiOverrides = map[rune]bool{
 	0x200E: true, 0x200F: true, 0x061C: true,
 }
 
-// sanitize makes an untrusted string safe to print to a terminal: every control
+// Sanitize makes an untrusted string safe to print to a terminal: every control
 // character (including ESC, the basis of ANSI escape sequences) and every
 // bidirectional override is replaced with U+FFFD. Apply it to any string that
-// originates from archive contents or a provider before printing — ZIP entry
-// names, ComicInfo field values, provider-supplied series names, etc.
-func sanitize(s string) string {
+// originates from archive contents, a provider, or a filename before printing —
+// ZIP entry names, ComicInfo field values, provider-supplied series names, and
+// paths discovered by directory listing (downloaded comics carry attacker-chosen
+// filenames). Exported so main can sanitize the final error message; strings
+// printed via %q are already escaped and don't need it.
+func Sanitize(s string) string {
 	hasUnsafe := false
 	for _, r := range s {
 		if unicode.IsControl(r) || bidiOverrides[r] {
@@ -101,7 +104,7 @@ func writeComicInfo(path string, ci *comicinfo.ComicInfo) error {
 	if err := archive.RewriteArchive(path, keep, map[string][]byte{archive.ComicInfoName: data}); err != nil {
 		return err
 	}
-	fmt.Printf("%s: wrote ComicInfo.xml\n", path)
+	fmt.Printf("%s: wrote ComicInfo.xml\n", Sanitize(path))
 	return nil
 }
 

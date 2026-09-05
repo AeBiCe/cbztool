@@ -20,8 +20,8 @@ func TestSanitize(t *testing.T) {
 		{"empty", "", ""},
 	}
 	for _, c := range cases {
-		if got := sanitize(c.in); got != c.want {
-			t.Errorf("%s: sanitize(%q) = %q, want %q", c.name, c.in, got, c.want)
+		if got := Sanitize(c.in); got != c.want {
+			t.Errorf("%s: Sanitize(%q) = %q, want %q", c.name, c.in, got, c.want)
 		}
 	}
 }

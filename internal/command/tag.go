@@ -225,7 +225,7 @@ func tagDirOnline(chain []provider.Provider, dir string, dryRun, force bool, id 
 
 	var total groupOutcome
 	for _, f := range ungroupable {
-		fmt.Printf("%s: no series parsed from filename; skipped\n", f)
+		fmt.Printf("%s: no series parsed from filename; skipped\n", Sanitize(f))
 		total.skipped++
 	}
 	for _, g := range groups {
@@ -256,7 +256,7 @@ type groupOutcome struct{ resolved, skipped, failed, viaFallback int }
 func tagSeriesGroup(chain []provider.Provider, g *seriesGroup, dryRun, force, verbose bool) groupOutcome {
 	matched, series, ok, err := resolveGroupSeries(chain, g, verbose)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "cb: series %q: %v\n", g.display, err)
+		fmt.Fprintf(os.Stderr, "cb: series %q: %s\n", g.display, Sanitize(err.Error()))
 		return groupOutcome{failed: len(g.files)}
 	}
 	if !ok {
@@ -293,7 +293,7 @@ func tagSeriesGroup(chain []provider.Provider, g *seriesGroup, dryRun, force, ve
 		written, ferr := tagFileWithResolver(matched, f, resolve, dryRun, force)
 		switch {
 		case ferr != nil:
-			fmt.Fprintf(os.Stderr, "cb: %s: %v\n", f, ferr)
+			fmt.Fprintf(os.Stderr, "cb: %s: %s\n", Sanitize(f), Sanitize(ferr.Error()))
 			o.failed++
 		case written:
 			o.resolved++
@@ -396,19 +396,19 @@ func printGroupingTree(groups []*seriesGroup, ungroupable []string) {
 		if y := g.repYear(); y > 0 {
 			year = fmt.Sprintf("~%d", y)
 		}
-		fmt.Printf("[verbose]   %s (%s) — %d issue(s)\n", g.display, year, distinctNumbers(g.parsed))
+		fmt.Printf("[verbose]   %s (%s) — %d issue(s)\n", Sanitize(g.display), year, distinctNumbers(g.parsed))
 		for i, p := range g.parsed {
 			num := p.Number
 			if num == "" {
 				num = "?"
 			}
-			fmt.Printf("[verbose]       #%-5s %s\n", num, filepath.Base(g.files[i]))
+			fmt.Printf("[verbose]       #%-5s %s\n", num, Sanitize(filepath.Base(g.files[i])))
 		}
 	}
 	if len(ungroupable) > 0 {
 		fmt.Printf("[verbose]   (no series parsed — ungroupable)\n")
 		for _, f := range ungroupable {
-			fmt.Printf("[verbose]       %s\n", filepath.Base(f))
+			fmt.Printf("[verbose]       %s\n", Sanitize(filepath.Base(f)))
 		}
 	}
 }
@@ -429,7 +429,7 @@ func printSeriesIDTree(seriesID string, available int, files []string, parsed []
 				status = "not in series"
 			}
 		}
-		fmt.Printf("[verbose]       #%-5s %s  (%s)\n", num, filepath.Base(f), status)
+		fmt.Printf("[verbose]       #%-5s %s  (%s)\n", num, Sanitize(filepath.Base(f)), status)
 	}
 }
 
@@ -523,7 +523,7 @@ func tagBySeriesID(prov provider.Provider, target string, isDir bool, seriesID s
 		written, ferr := tagFileWithResolver(prov, f, resolve, dryRun, force)
 		switch {
 		case ferr != nil:
-			fmt.Fprintf(os.Stderr, "cb: %s: %v\n", f, ferr)
+			fmt.Fprintf(os.Stderr, "cb: %s: %s\n", Sanitize(f), Sanitize(ferr.Error()))
 			failed++
 		case written:
 			resolved++
@@ -557,13 +557,13 @@ func tagFileWithResolver(prov provider.Provider, path string, resolve issueResol
 	pageCount := a.PageCount()
 	a.Close()
 	if found && !force && !dryRun {
-		fmt.Printf("%s: already has ComicInfo.xml (skipped; use --force)\n", path)
+		fmt.Printf("%s: already has ComicInfo.xml (skipped; use --force)\n", Sanitize(path))
 		return false, nil
 	}
 
 	number := filename.Parse(path).Number
 	if number == "" {
-		fmt.Printf("%s: no issue number parsed from filename; skipped\n", path)
+		fmt.Printf("%s: no issue number parsed from filename; skipped\n", Sanitize(path))
 		return false, nil
 	}
 
@@ -572,7 +572,7 @@ func tagFileWithResolver(prov provider.Provider, path string, resolve issueResol
 	cancel()
 	if err != nil {
 		if errors.Is(err, provider.ErrNotFound) {
-			fmt.Printf("%s: issue #%s not in the series; skipped\n", path, number)
+			fmt.Printf("%s: issue #%s not in the series; skipped\n", Sanitize(path), number)
 			return false, nil
 		}
 		return false, err
@@ -670,7 +670,7 @@ func printDryRun(path, providerName string, ci *comicinfo.ComicInfo) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%s: resolved via %s (dry-run, not written):\n", path, providerName)
+	fmt.Printf("%s: resolved via %s (dry-run, not written):\n", Sanitize(path), providerName)
 	os.Stdout.Write(data)
 	return nil
 }
@@ -779,7 +779,7 @@ func resolveIssue(ctx context.Context, prov provider.Provider, p *prompter, seri
 // one (if any) with "=>". It lets the user see why an auto-match did or did not
 // happen — e.g. an ambiguous name, a year mismatch, or no exact-name match.
 func printSearchDiagnostics(path, providerName string, parsed filename.ParsedName, results []provider.SeriesResult, picked *provider.SeriesResult) {
-	fmt.Printf("[verbose] %s\n", path)
+	fmt.Printf("[verbose] %s\n", Sanitize(path))
 	fmt.Printf("[verbose]   parsed: series=%q number=%q year=%d vol=%d\n", parsed.Series, parsed.Number, parsed.Year, parsed.Volume)
 	fmt.Printf("[verbose]   %d series candidate(s) from %s for %q:\n", len(results), providerName, parsed.Series)
 	for _, s := range results {
@@ -866,12 +866,12 @@ func bestSeriesMatch(results []provider.SeriesResult, name string, year int) (pr
 // omitting the year when unknown and the publisher when the provider didn't
 // supply one. Untrusted fields are sanitized for terminal output.
 func seriesLabel(s provider.SeriesResult) string {
-	label := sanitize(s.Name)
+	label := Sanitize(s.Name)
 	if s.StartYear > 0 {
 		label += fmt.Sprintf(" (%d)", s.StartYear)
 	}
 	if s.Publisher != "" {
-		label += " — " + sanitize(s.Publisher)
+		label += " — " + Sanitize(s.Publisher)
 	}
 	return label
 }
@@ -1012,7 +1012,7 @@ func tagManualSeries(dir string, force bool) error {
 
 	for _, f := range files {
 		if err := tagSeriesOne(f, series, writer, genre, ageRating, force); err != nil {
-			fmt.Fprintf(os.Stderr, "cb: %s: %v\n", f, err)
+			fmt.Fprintf(os.Stderr, "cb: %s: %s\n", Sanitize(f), Sanitize(err.Error()))
 		}
 	}
 	return nil
@@ -1027,7 +1027,7 @@ func tagSeriesOne(path, series, writer, genre, ageRating string, force bool) err
 	pageCount := a.PageCount()
 	a.Close()
 	if found && !force {
-		fmt.Printf("%s: already has ComicInfo.xml (skipped; use --force)\n", path)
+		fmt.Printf("%s: already has ComicInfo.xml (skipped; use --force)\n", Sanitize(path))
 		return nil
 	}
 
@@ -1037,7 +1037,7 @@ func tagSeriesOne(path, series, writer, genre, ageRating string, force bool) err
 	if n, _, ok := archive.LastNumber(stem); ok {
 		number = strconv.Itoa(n)
 	} else {
-		fmt.Printf("%s: warning: no number in filename; Number left empty\n", path)
+		fmt.Printf("%s: warning: no number in filename; Number left empty\n", Sanitize(path))
 	}
 
 	ci := &comicinfo.ComicInfo{

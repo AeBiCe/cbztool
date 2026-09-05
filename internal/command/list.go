@@ -21,7 +21,7 @@ func List(args []string) error {
 	}
 	for _, f := range files {
 		if err := listOne(f); err != nil {
-			fmt.Fprintf(os.Stderr, "cb: %s: %v\n", f, err)
+			fmt.Fprintf(os.Stderr, "cb: %s: %s\n", Sanitize(f), Sanitize(err.Error()))
 		}
 	}
 	return nil
@@ -34,12 +34,12 @@ func listOne(path string) error {
 	}
 	defer a.Close()
 
-	fmt.Println(path)
+	fmt.Println(Sanitize(path))
 	for _, f := range a.Files() {
 		if f.FileInfo().IsDir() {
 			continue
 		}
-		fmt.Printf("  %10d  %s\n", f.UncompressedSize64, sanitize(f.Name))
+		fmt.Printf("  %10d  %s\n", f.UncompressedSize64, Sanitize(f.Name))
 	}
 	return nil
 }

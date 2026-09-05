@@ -1,10 +1,41 @@
 package provider
 
 import (
+	"errors"
 	"net/http"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 )
+
+// TestRedactTransportError guards against credential leakage: a transport
+// error's *url.Error carries the full request URL, which for ComicVine
+// includes the api_key, and must never survive into a reported error.
+func TestRedactTransportError(t *testing.T) {
+	inner := errors.New("connect: connection refused")
+	wrapped := &url.Error{
+		Op:  "Get",
+		URL: "https://comicvine.gamespot.com/api/issues/?api_key=SECRET123&format=json",
+		Err: inner,
+	}
+	err := redactTransportError("comicvine", "/issues/", wrapped)
+	if s := err.Error(); strings.Contains(s, "SECRET123") || strings.Contains(s, "api_key") {
+		t.Errorf("redacted error still contains the request URL: %q", s)
+	}
+	if !strings.Contains(err.Error(), "/issues/") {
+		t.Errorf("redacted error lost the endpoint label: %q", err.Error())
+	}
+	if !errors.Is(err, inner) {
+		t.Errorf("redacted error lost the underlying cause: %v", err)
+	}
+
+	// An error without an embedded URL passes through unchanged.
+	plain := errors.New("no route to host")
+	if got := redactTransportError("metron", "/series/", plain); got != plain {
+		t.Errorf("non-URL error was rewritten: %v", got)
+	}
+}
 
 func TestRetryAfter(t *testing.T) {
 	cases := []struct {

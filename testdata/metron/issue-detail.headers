@@ -1,0 +1,25 @@
+HTTP/2 200 
+server: nginx/1.31.1
+date: Fri, 19 Jun 2026 07:58:50 GMT
+content-type: application/json
+content-length: 3446
+vary: Accept-Encoding
+allow: GET, PUT, PATCH, HEAD, OPTIONS
+cross-origin-opener-policy: same-origin
+last-modified: Mon, 30 Dec 2024 01:05:12 GMT
+referrer-policy: same-origin
+strict-transport-security: max-age=15778800; includeSubDomains; preload
+vary: Accept
+x-content-type-options: nosniff
+x-frame-options: DENY
+x-ratelimit-burst-limit: 20
+x-ratelimit-burst-remaining: 18
+x-ratelimit-burst-reset: 1781855980
+x-ratelimit-sustained-limit: 5000
+x-ratelimit-sustained-remaining: 4957
+x-ratelimit-sustained-reset: 1781902910
+strict-transport-security: max-age=15778800; includeSubDomains; preload
+x-content-type-options: nosniff
+x-frame-options: DENY
+referrer-policy: strict-origin-when-cross-origin
+

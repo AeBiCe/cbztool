@@ -17,7 +17,9 @@ import (
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "cb:", err)
+		// The error chain can carry untrusted text (filenames, archive entry
+		// names, provider responses); neutralize terminal escapes before printing.
+		fmt.Fprintln(os.Stderr, "cb:", command.Sanitize(err.Error()))
 		os.Exit(1)
 	}
 }

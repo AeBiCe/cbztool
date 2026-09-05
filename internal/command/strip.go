@@ -22,7 +22,7 @@ func Strip(args []string) error {
 	}
 	for _, f := range files {
 		if err := stripOne(f); err != nil {
-			fmt.Fprintf(os.Stderr, "cb: %s: %v\n", f, err)
+			fmt.Fprintf(os.Stderr, "cb: %s: %s\n", Sanitize(f), Sanitize(err.Error()))
 		}
 	}
 	return nil
@@ -37,7 +37,7 @@ func stripOne(path string) error {
 	_, _, found, _ := a.ReadComicInfo()
 	a.Close()
 	if !found {
-		fmt.Printf("%s: no ComicInfo.xml\n", path)
+		fmt.Printf("%s: no ComicInfo.xml\n", Sanitize(path))
 		return nil
 	}
 
@@ -45,6 +45,6 @@ func stripOne(path string) error {
 	if err := archive.RewriteArchive(path, keep, nil); err != nil {
 		return err
 	}
-	fmt.Printf("%s: removed ComicInfo.xml\n", path)
+	fmt.Printf("%s: removed ComicInfo.xml\n", Sanitize(path))
 	return nil
 }

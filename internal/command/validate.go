@@ -26,7 +26,7 @@ func Validate(args []string) error {
 	for _, f := range files {
 		ok, err := validateOne(f)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "cb: %s: %v\n", f, err)
+			fmt.Fprintf(os.Stderr, "cb: %s: %s\n", Sanitize(f), Sanitize(err.Error()))
 			failed++
 			continue
 		}
@@ -52,16 +52,16 @@ func validateOne(path string) (bool, error) {
 
 	images := a.ImageEntries()
 	if len(images) == 0 {
-		fmt.Printf("%s: no page images found\n", path)
+		fmt.Printf("%s: no page images found\n", Sanitize(path))
 		return false, nil
 	}
 
 	problems, maxNum := pageProblems(images)
 	if len(problems) == 0 {
-		fmt.Printf("%s: OK (%d pages, 1-%d)\n", path, len(images), maxNum)
+		fmt.Printf("%s: OK (%d pages, 1-%d)\n", Sanitize(path), len(images), maxNum)
 		return true, nil
 	}
-	fmt.Printf("%s: %d page images, problems found:\n", path, len(images))
+	fmt.Printf("%s: %d page images, problems found:\n", Sanitize(path), len(images))
 	for _, p := range problems {
 		fmt.Printf("  - %s\n", p)
 	}
@@ -109,7 +109,7 @@ func pageProblems(images []string) (problems []string, maxNum int) {
 
 	for _, n := range sortedKeys(byNum) {
 		if len(byNum[n]) > 1 {
-			problems = append(problems, fmt.Sprintf("duplicate page %d: %s", n, sanitize(strings.Join(byNum[n], ", "))))
+			problems = append(problems, fmt.Sprintf("duplicate page %d: %s", n, Sanitize(strings.Join(byNum[n], ", "))))
 		}
 	}
 
@@ -118,7 +118,7 @@ func pageProblems(images []string) (problems []string, maxNum int) {
 	}
 
 	if len(unnumbered) > 0 {
-		problems = append(problems, "no page number: "+sanitize(strings.Join(unnumbered, ", ")))
+		problems = append(problems, "no page number: "+Sanitize(strings.Join(unnumbered, ", ")))
 	}
 
 	return problems, maxNum

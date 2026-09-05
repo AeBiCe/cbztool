@@ -23,8 +23,14 @@ devenv.local.yaml
 # direnv
 .direnv
 
+# Claude
+.claude
+
 # pre-commit
 .pre-commit-config.yaml
 
 # Internal roadmap
 ROADMAP.md
+
+# Security reviews
+security-review*

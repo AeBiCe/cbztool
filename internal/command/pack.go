@@ -54,7 +54,7 @@ func Pack(args []string) error {
 	if err := archive.BuildArchive(out, entries, *force); err != nil {
 		return err
 	}
-	fmt.Printf("packed %d images -> %s\n", len(images), out)
+	fmt.Printf("packed %d images -> %s\n", len(images), Sanitize(out))
 
 	if warn := pageOrderWarning(images); warn != "" {
 		fmt.Fprintf(os.Stderr, "cb: warning: %s\n", warn)
@@ -62,7 +62,7 @@ func Pack(args []string) error {
 
 	// Advisory page-sequence check: report problems but never fail the pack.
 	if _, verr := validateOne(out); verr != nil {
-		fmt.Fprintf(os.Stderr, "cb: %s: %v\n", out, verr)
+		fmt.Fprintf(os.Stderr, "cb: %s: %s\n", Sanitize(out), Sanitize(verr.Error()))
 	}
 
 	if !*tagAfter {
@@ -97,7 +97,7 @@ func collectImages(dir string) (entries map[string][]byte, images []string, err 
 			return nil, ierr
 		}
 		if fi.Size() > archive.MaxEntrySize {
-			return nil, fmt.Errorf("%s is %d bytes (> %d)", sanitize(e.Name()), fi.Size(), int64(archive.MaxEntrySize))
+			return nil, fmt.Errorf("%s is %d bytes (> %d)", Sanitize(e.Name()), fi.Size(), int64(archive.MaxEntrySize))
 		}
 		total += uint64(fi.Size())
 		if total > archive.MaxTotalSize {
@@ -117,7 +117,7 @@ func collectImages(dir string) (entries map[string][]byte, images []string, err 
 		// following a symlink would slurp the *target's* contents — e.g. a
 		// "cover.jpg" -> /etc/passwd link — into the archive.
 		if !e.Type().IsRegular() {
-			fmt.Fprintf(os.Stderr, "cb: skipping non-regular file %s\n", sanitize(name))
+			fmt.Fprintf(os.Stderr, "cb: skipping non-regular file %s\n", Sanitize(name))
 			continue
 		}
 		switch {

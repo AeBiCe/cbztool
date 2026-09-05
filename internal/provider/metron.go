@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -159,7 +160,7 @@ func apiGet(ctx context.Context, name string, client *http.Client, limiter *rate
 		resp, err := client.Do(req)
 		if err != nil {
 			// Transient network error: back off and retry.
-			lastErr = err
+			lastErr = redactTransportError(name, label, err)
 			if serr := sleep(ctx, backoffDelay(attempt, 0)); serr != nil {
 				return nil, serr
 			}
@@ -204,6 +205,17 @@ func apiGet(ctx context.Context, name string, client *http.Client, limiter *rate
 		return nil, fmt.Errorf("%s: still throttled after %d attempts: %v — try again later or lower your request rate", name, maxAttempts, lastErr)
 	}
 	return nil, fmt.Errorf("%s: giving up after %d attempts: %w", name, maxAttempts, lastErr)
+}
+
+// redactTransportError rewrites a transport-layer error for safe reporting: a
+// *url.Error stringifies with the full request URL, which for ComicVine carries
+// the api_key query parameter, so the message is rebuilt from the endpoint
+// label instead. Errors that don't embed a URL pass through unchanged.
+func redactTransportError(name, label string, err error) error {
+	if ue, ok := errors.AsType[*url.Error](err); ok {
+		return fmt.Errorf("%s: %s %s: %w", name, ue.Op, label, ue.Err)
+	}
+	return err
 }
 
 // retryAfter parses a Retry-After header, which may be either a number of

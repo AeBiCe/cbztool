@@ -24,7 +24,7 @@ func Info(args []string) error {
 	}
 	for _, f := range files {
 		if err := infoOne(f); err != nil {
-			fmt.Fprintf(os.Stderr, "cb: %s: %v\n", f, err)
+			fmt.Fprintf(os.Stderr, "cb: %s: %s\n", Sanitize(f), Sanitize(err.Error()))
 		}
 	}
 	return nil
@@ -41,7 +41,7 @@ func infoOne(path string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(path)
+	fmt.Println(Sanitize(path))
 	if !found {
 		fmt.Println("  (no ComicInfo.xml)")
 		return nil
@@ -64,7 +64,7 @@ func printComicInfo(ci *comicinfo.ComicInfo) {
 		switch val := v.Field(i).Interface().(type) {
 		case string:
 			if val != "" {
-				fmt.Printf("  %-20s %s\n", name, sanitize(val))
+				fmt.Printf("  %-20s %s\n", name, Sanitize(val))
 			}
 		case int:
 			if val != 0 {
