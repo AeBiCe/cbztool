@@ -2,11 +2,14 @@
 
 All notable changes to cbztool are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and cbztool adheres to
-[Semantic Versioning](https://semver.org/) from 1.0.0 on.
+[Semantic Versioning](https://semver.org/) (see README "Versioning" for what it
+covers, and what 0.x versions promise).
 
 ## [Unreleased]
 
-Work toward 1.0.0.
+## [0.9.0] - 2026-10-27
+
+First tracked release: feature-complete toward 1.0.0.
 
 ### Added
 
@@ -140,3 +143,6 @@ Work toward 1.0.0.
   `Saga Vol. 2.cbz`) were skipped with "no issue number parsed"; the volume is
   now used as the issue number, and a subtitle after it no longer ends up in
   the series name.
+
+[Unreleased]: https://github.com/AeBiCe/cbztool/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/AeBiCe/cbztool/releases/tag/v0.9.0

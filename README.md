@@ -441,6 +441,15 @@ What the version number protects: command names and flags, exit status, the
 config file format and environment variables, and the `ComicInfo.xml` cbz
 writes. Human-readable output (messages, summaries) may change in any release.
 
+- **From 1.0.0:** a breaking change to any of the above bumps the major
+  version, a new feature the minor, a fix the patch.
+- **Before 1.0 (0.x):** a minor bump (0.9 → 0.10) may break things; a patch
+  bump only fixes them. Breaking changes are marked **Breaking:** in the
+  changelog.
+- **Nix flake builds** can't see git tags, so they report
+  `0-unstable-<commit>`; packaged releases (e.g. nixpkgs) carry the tag's
+  version.
+
 ## License
 
 cbztool is licensed under the GNU General Public License v3.0 or later

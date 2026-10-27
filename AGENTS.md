@@ -44,7 +44,8 @@ Semver from git tags only: the user tags releases (`vX.Y.Z`) by hand — never
 write a version number into the source, and don't add release scripts.
 `internal/version` reads it from the build info (or `-ldflags -X …/internal/version.version=…`
 for Nix builds). At release time the user moves `[Unreleased]` in
-CHANGELOG.md under the new version.
+CHANGELOG.md under the new version (and updates the compare links at the
+bottom). Pre-1.0 (0.x), a minor bump may break things; see README "Versioning".
 
 ## Build, format, test (run all before claiming done)
 
