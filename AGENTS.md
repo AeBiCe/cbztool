@@ -137,9 +137,9 @@ provided via `devenv` (1.26+); if `go`/`gofmt` aren't on `PATH`, they live at
 
 ## Secrets
 
-- Never commit real credentials. The config (`$XDG_CONFIG_HOME/cbz/config.json`,
+- Never commit real credentials. The config (`$XDG_CONFIG_HOME/cbztool/config.json`,
   plus an optional `-c`/`CBZ_CONFIG` layer) holds **settings only**; secrets
-  come from `password_file`/`api_key_file` or env vars, and an inline secret is
+  come from `api_key_file` or env vars, and an inline secret is
   rejected. Keep it that way — the config must stay safe to share (dotfiles,
   home-manager / Nix store).
 - `config.Load` never reads secret files; commands that contact a provider
@@ -148,9 +148,10 @@ provided via `devenv` (1.26+); if `go`/`gofmt` aren't on `PATH`, they live at
 - `config.example.json` must equal `config.Example` (`cbz config init` output);
   `TestExampleMatchesRepoFile` enforces it. New settings go in both, with a
   built-in default in `config.Default`.
-- Env vars override the files: `CBZ_PROVIDER`, `CBZ_METRON_USERNAME`,
-  `CBZ_METRON_PASSWORD`, `CBZ_COMICVINE_API_KEY`.
-- When testing in a sandbox that can't read `~/.config/cbz`, point
+- Env vars override the files: `CBZ_PROVIDER`, `CBZ_METRON_TOKEN`,
+  `CBZ_COMICVINE_API_KEY`. Metron authenticates with an API token (Bearer);
+  Basic auth (username/password) was dropped, and old configs get a migration error.
+- When testing in a sandbox that can't read `~/.config/cbztool`, point
   `XDG_CONFIG_HOME` at a scratch dir and pass a sample config with `-c`.
 
 ## Testing conventions

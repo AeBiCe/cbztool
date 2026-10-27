@@ -106,14 +106,11 @@ type CacheControl interface {
 }
 
 // ProviderConfig holds one backend's settings, resolved by the command layer
-// from cbz's configuration (package config). Credentials are separate fields so
-// each backend takes only what it needs (ComicVine uses APIKey; Metron/GCD use
-// HTTP Basic user/pass). CacheTTL is the on-disk response freshness; zero means
-// the default (defaultCacheTTL).
+// from cbz's configuration (package config). APIKey is the backend's secret
+// (ComicVine's API key, Metron's API token). CacheTTL is the on-disk response
+// freshness; zero means the default (defaultCacheTTL).
 type ProviderConfig struct {
 	APIKey   string
-	Username string
-	Password string
 	CacheTTL time.Duration
 }
 

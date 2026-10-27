@@ -87,11 +87,8 @@ func configShow() error {
 		return err
 	}
 	type shownCreds struct {
-		Username     string `json:"username,omitempty"`
-		PasswordFile string `json:"password_file,omitempty"`
-		APIKeyFile   string `json:"api_key_file,omitempty"`
-		Password     string `json:"password,omitempty"`
-		APIKey       string `json:"api_key,omitempty"`
+		APIKeyFile string `json:"api_key_file,omitempty"`
+		APIKey     string `json:"api_key,omitempty"`
 	}
 	shown := struct {
 		Providers   config.Providers      `json:"providers"`
@@ -99,10 +96,7 @@ func configShow() error {
 		Credentials map[string]shownCreds `json:"credentials,omitempty"`
 	}{Providers: cfg.Providers, Rename: cfg.Rename, Credentials: map[string]shownCreds{}}
 	for name, c := range cfg.Credentials {
-		s := shownCreds{Username: c.Username, PasswordFile: c.PasswordFile, APIKeyFile: c.APIKeyFile}
-		if c.Password != "" {
-			s.Password = "(set)"
-		}
+		s := shownCreds{APIKeyFile: c.APIKeyFile}
 		if c.APIKey != "" {
 			s.APIKey = "(set)"
 		}

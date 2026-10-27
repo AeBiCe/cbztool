@@ -15,11 +15,10 @@ const Example = `{
   },
   "credentials": {
     "metron": {
-      "username": "YOUR_METRON_USERNAME",
-      "password_file": "~/.config/cbz/metron-password"
+      "api_key_file": "~/.config/cbztool/metron-token"
     },
     "comicvine": {
-      "api_key_file": "~/.config/cbz/comicvine-api-key"
+      "api_key_file": "~/.config/cbztool/comicvine-api-key"
     }
   }
 }

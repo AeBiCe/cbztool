@@ -42,33 +42,34 @@ const (
 
 func init() {
 	registerProvider("metron", func(cfg ProviderConfig) (Provider, error) {
-		if cfg.Username == "" || cfg.Password == "" {
-			return nil, fmt.Errorf("metron requires a username and password (credentials.metron in the config, or CBZ_METRON_USERNAME/CBZ_METRON_PASSWORD)")
+		if cfg.APIKey == "" {
+			return nil, fmt.Errorf("metron requires an API token: create one on your Metron profile page (API Tokens), " +
+				"then set credentials.metron.api_key_file in the config, or CBZ_METRON_TOKEN")
 		}
-		return newMetron(cfg.Username, cfg.Password, cfg.CacheTTL), nil
+		return newMetron(cfg.APIKey, cfg.CacheTTL), nil
 	})
 }
 
-// metron is a Provider backed by the Metron API (metron.cloud). It uses HTTP
-// Basic auth, self-throttles to stay within Metron's rate limit, backs off and
-// retries on throttling, and caches identical GETs both for the life of the
-// process (in-memory) and across runs (on disk, TTL-bounded).
+// metron is a Provider backed by the Metron API (metron.cloud). It
+// authenticates with an API token (Bearer), self-throttles to stay within
+// Metron's rate limit, backs off and retries on throttling, and caches
+// identical GETs both for the life of the process (in-memory) and across runs
+// (on disk, TTL-bounded).
 type metron struct {
-	user, pass string
-	baseURL    string
-	http       *http.Client
-	limiter    *rateLimiter
-	disk       *diskCache
-	refresh    bool // when true, ignore disk-cache reads for this run
+	token   string
+	baseURL string
+	http    *http.Client
+	limiter *rateLimiter
+	disk    *diskCache
+	refresh bool // when true, ignore disk-cache reads for this run
 
 	mu    sync.Mutex
 	cache map[string][]byte // url -> raw 200 response body, for the current run
 }
 
-func newMetron(user, pass string, cacheTTL time.Duration) *metron {
+func newMetron(token string, cacheTTL time.Duration) *metron {
 	return &metron{
-		user:    user,
-		pass:    pass,
+		token:   token,
 		baseURL: metronBaseURL,
 		http:    &http.Client{Timeout: 30 * time.Second},
 		limiter: newRateLimiter(3 * time.Second), // ~20/min
@@ -127,10 +128,10 @@ func (m *metron) cachePut(u string, body []byte) {
 
 // fetch issues an authenticated GET with rate-limiting and returns the raw 200
 // body. The retry/backoff machinery is shared with other REST backends via
-// apiGet; metron only contributes its HTTP Basic credentials.
+// apiGet; metron only contributes its API token.
 func (m *metron) fetch(ctx context.Context, u, path string) ([]byte, error) {
 	return apiGet(ctx, "metron", m.http, m.limiter, u, path, func(req *http.Request) {
-		req.SetBasicAuth(m.user, m.pass)
+		req.Header.Set("Authorization", "Bearer "+m.token)
 	})
 }
 
@@ -139,7 +140,7 @@ func (m *metron) fetch(ctx context.Context, u, path string) ([]byte, error) {
 // errors, honoring a Retry-After header (or a DRF throttle body's "available in
 // N seconds") and otherwise backing off exponentially with jitter; it stops at
 // the context deadline or after maxAttempts. Accept and User-Agent are always
-// set; decorate adds per-backend headers (e.g. Basic auth) and may be nil for
+// set; decorate adds per-backend headers (e.g. the Metron token) and may be nil for
 // backends that authenticate via a query parameter. label names the endpoint in
 // errors. apiGet neither caches nor decodes — callers layer that on top.
 func apiGet(ctx context.Context, name string, client *http.Client, limiter *rateLimiter, u, label string, decorate func(*http.Request)) ([]byte, error) {

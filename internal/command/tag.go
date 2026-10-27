@@ -126,8 +126,6 @@ func buildProvider(cfg *config.Config, name string, refresh bool) (provider.Prov
 	cr := cfg.Credentials[name]
 	prov, err := provider.New(name, provider.ProviderConfig{
 		APIKey:   cr.APIKey,
-		Username: cr.Username,
-		Password: cr.Password,
 		CacheTTL: cfg.Providers.CacheTTL.Duration,
 	})
 	if err != nil {

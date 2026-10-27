@@ -2,7 +2,7 @@
 // only the keys it sets:
 //
 //  1. built-in defaults (Default)
-//  2. $XDG_CONFIG_HOME/cbz/config.json (falling back to ~/.config/cbz), if present
+//  2. $XDG_CONFIG_HOME/cbztool/config.json (falling back to ~/.config/cbztool), if present
 //  3. an explicit file from -c/--config or CBZ_CONFIG, which must exist
 //  4. environment variables (CBZ_PROVIDER and the credential variables)
 //
@@ -58,21 +58,21 @@ type Rename struct {
 	Template string `json:"template"`
 }
 
-// Credentials locates one provider's secrets. Username is not secret and may
-// be inline; passwords and API keys are read from files (or the environment).
+// Credentials locates one provider's secret: an API key (Metron calls it an
+// API token), read from a file or the environment.
 type Credentials struct {
-	Username     string `json:"username,omitempty"`
-	PasswordFile string `json:"password_file,omitempty"`
-	APIKeyFile   string `json:"api_key_file,omitempty"`
+	APIKeyFile string `json:"api_key_file,omitempty"`
 
-	// Inline secrets are rejected by Load; these exist only so the error can
-	// explain how to migrate instead of reporting an unknown key.
-	InlinePassword string `json:"password,omitempty"`
+	// Rejected by Load; these exist only so the error can explain how to
+	// migrate instead of reporting an unknown key: an inline secret, and the
+	// username/password Metron used before it moved to API tokens.
 	InlineAPIKey   string `json:"api_key,omitempty"`
+	Username       string `json:"username,omitempty"`
+	PasswordFile   string `json:"password_file,omitempty"`
+	InlinePassword string `json:"password,omitempty"`
 
-	// Password and APIKey hold the resolved secrets; never serialized.
-	Password string `json:"-"`
-	APIKey   string `json:"-"`
+	// APIKey holds the resolved secret; never serialized.
+	APIKey string `json:"-"`
 }
 
 // Duration is a time.Duration written as a string ("24h", "90m") in JSON.
@@ -125,7 +125,7 @@ func Default() *Config {
 const maxFileSize = 1 << 20
 
 // DefaultPath is the config file read when present:
-// $XDG_CONFIG_HOME/cbz/config.json, falling back to ~/.config/cbz/config.json.
+// $XDG_CONFIG_HOME/cbztool/config.json, falling back to ~/.config/cbztool/config.json.
 func DefaultPath() (string, error) {
 	dir := os.Getenv("XDG_CONFIG_HOME")
 	if dir == "" {
@@ -135,7 +135,7 @@ func DefaultPath() (string, error) {
 		}
 		dir = filepath.Join(home, ".config")
 	}
-	return filepath.Join(dir, "cbz", "config.json"), nil
+	return filepath.Join(dir, "cbztool", "config.json"), nil
 }
 
 // Load builds the configuration from every layer. explicit is the -c/--config
@@ -202,9 +202,15 @@ func (c *Config) apply(path string, required bool) error {
 		return fmt.Errorf("parse %s: %w", path, err)
 	}
 	for name, cr := range c.Credentials {
-		if cr.InlinePassword != "" || cr.InlineAPIKey != "" {
+		if cr.Username != "" || cr.PasswordFile != "" || cr.InlinePassword != "" {
+			return fmt.Errorf("%s: credentials.%s uses a username and password, which Metron "+
+				"is retiring for API tokens; create a token on your Metron profile page (API Tokens), "+
+				"save it to a file (chmod 600) and reference it with api_key_file — "+
+				"see `cbz config init` or config.example.json", path, name)
+		}
+		if cr.InlineAPIKey != "" {
 			return fmt.Errorf("%s: credentials.%s holds a secret inline; move it to a file "+
-				"(chmod 600) and reference it with password_file / api_key_file, or use an "+
+				"(chmod 600) and reference it with api_key_file, or use an "+
 				"environment variable — the config file is meant to be shareable", path, name)
 		}
 	}
@@ -218,8 +224,7 @@ var envCredentials = []struct {
 	env, provider string
 	set           func(*Credentials, string)
 }{
-	{"CBZ_METRON_USERNAME", "metron", func(c *Credentials, v string) { c.Username = v }},
-	{"CBZ_METRON_PASSWORD", "metron", func(c *Credentials, v string) { c.Password = v }},
+	{"CBZ_METRON_TOKEN", "metron", func(c *Credentials, v string) { c.APIKey = v }},
 	{"CBZ_COMICVINE_API_KEY", "comicvine", func(c *Credentials, v string) { c.APIKey = v }},
 }
 
@@ -309,17 +314,12 @@ func (c *Config) validate(known []string, canon func(string) string) error {
 	return nil
 }
 
-// ResolveSecrets reads each password_file / api_key_file whose secret isn't
-// already set from the environment, so a missing or unreadable secret file is
-// reported before any provider is contacted.
+// ResolveSecrets reads each api_key_file whose secret isn't already set from
+// the environment, so a missing or unreadable secret file is reported before
+// any provider is contacted.
 func (c *Config) ResolveSecrets() error {
 	for name, cr := range c.Credentials {
 		var err error
-		if cr.Password == "" && cr.PasswordFile != "" {
-			if cr.Password, err = readSecret(cr.PasswordFile); err != nil {
-				return fmt.Errorf("credentials.%s.password_file: %w", name, err)
-			}
-		}
 		if cr.APIKey == "" && cr.APIKeyFile != "" {
 			if cr.APIKey, err = readSecret(cr.APIKeyFile); err != nil {
 				return fmt.Errorf("credentials.%s.api_key_file: %w", name, err)

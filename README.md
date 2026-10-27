@@ -341,15 +341,15 @@ equals). A near-miss is skipped, never guessed — the safeguard that keeps cbz 
 the mistagging that fuzzy taggers are prone to. `PageCount` always comes from
 the archive regardless.
 
-Responses are cached on disk under `$XDG_CACHE_HOME/cbz/` (or `~/.cache/cbz/`) for
+Responses are cached on disk under `$XDG_CACHE_HOME/cbztool/` (or `~/.cache/cbztool/`) for
 24h (`providers.cache_ttl`), so repeat and batch runs are fast and easy on the API. The cache is safe to
 delete at any time; pass `--refresh` to bypass it for one run (e.g. after fixing
 metadata upstream).
 
 ### Configuration
 
-cbz reads settings from `$XDG_CONFIG_HOME/cbz/config.json` (or
-`~/.config/cbz/config.json`). Create a starter file with:
+cbz reads settings from `$XDG_CONFIG_HOME/cbztool/config.json` (or
+`~/.config/cbztool/config.json`). Create a starter file with:
 
 ```sh
 cbz config init        # writes the default location; or: cbz config init <file>
@@ -366,7 +366,7 @@ cbz config path        # which files are read
   },
   "rename": { "template": "{Series}[ ({Year})] #{Number:3}" },
   "credentials": {
-    "metron":    { "username": "you", "password_file": "~/.config/cbz/metron-password" },
+    "metron":    { "api_key_file": "~/.config/cbztool/metron-token" },
     "comicvine": { "api_key_file": "/run/agenix/comicvine" }
   }
 }
@@ -381,27 +381,28 @@ cbz config path        # which files are read
 - `credentials` — one block per provider. Configure both to get combined
   metadata; a provider without credentials is skipped (unless you select it with
   `-p`).
-  - **Metron** — a free account at [metron.cloud](https://metron.cloud/).
+  - **Metron** — a free account at [metron.cloud](https://metron.cloud/), then
+    an API token from your profile page (**API Tokens**). Username/password
+    sign-in isn't supported: Metron is retiring it for the API.
   - **ComicVine** — a free API key from
     [comicvine.gamespot.com/api](https://comicvine.gamespot.com/api/).
 
 **The config file holds no secrets**, so it's safe to keep in a dotfiles repo or
-generate with home-manager. Passwords and API keys are read from the files named
-by `password_file` / `api_key_file` (absolute, or starting with `~/`; `chmod
+generate with home-manager. API keys and tokens are read from the file named by
+`api_key_file` (absolute, or starting with `~/`; `chmod
 600` — cbz warns otherwise), which fits agenix / sops-nix secrets, or from
 environment variables. A secret written inline in the config is rejected.
 
 Settings are layered; each layer overrides only the keys it sets:
 
 1. built-in defaults
-2. `~/.config/cbz/config.json`
+2. `~/.config/cbztool/config.json`
 3. `cbz -c <file> …` / `--config <file>` (or `CBZ_CONFIG`) — must exist
 4. environment variables:
 
 ```sh
 export CBZ_PROVIDER=comicvine         # move a provider to the front of the order
-export CBZ_METRON_USERNAME=you
-export CBZ_METRON_PASSWORD=secret
+export CBZ_METRON_TOKEN=...
 export CBZ_COMICVINE_API_KEY=...
 ```
 

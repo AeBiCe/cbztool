@@ -13,12 +13,38 @@ import (
 // tests never touch the real ~/.cache). Set m.disk explicitly to exercise it.
 func newTestMetron(srv *httptest.Server) *metron {
 	return &metron{
-		user:    "u",
-		pass:    "p",
+		token:   "tok",
 		baseURL: srv.URL,
 		http:    srv.Client(),
 		limiter: newRateLimiter(0),
 		cache:   make(map[string][]byte),
+	}
+}
+
+func TestFetchSendsBearerToken(t *testing.T) {
+	var auth string
+	var basic bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		_, _, basic = r.BasicAuth()
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	if _, err := newTestMetron(srv).fetch(context.Background(), srv.URL, "/issue/"); err != nil {
+		t.Fatal(err)
+	}
+	if auth != "Bearer tok" || basic {
+		t.Errorf("Authorization = %q (basic=%v), want \"Bearer tok\"", auth, basic)
+	}
+}
+
+func TestMetronRequiresToken(t *testing.T) {
+	if _, err := New("metron", ProviderConfig{}); err == nil {
+		t.Error("metron without a token must be rejected")
+	}
+	if _, err := New("metron", ProviderConfig{APIKey: "tok"}); err != nil {
+		t.Errorf("metron with a token: %v", err)
 	}
 }
 

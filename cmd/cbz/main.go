@@ -127,6 +127,6 @@ Commands:
 image directory). Run a command with -h for its flags.
 
 -c, --config <file> layers a config file over the default
-($XDG_CONFIG_HOME/cbz/config.json); CBZ_CONFIG does the same.
+($XDG_CONFIG_HOME/cbztool/config.json); CBZ_CONFIG does the same.
 `)
 }

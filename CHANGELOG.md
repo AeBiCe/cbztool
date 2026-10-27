@@ -16,7 +16,7 @@ Work toward 1.0.0.
 - Licensed under GPL-3.0-or-later.
 
 - **Layered configuration** (`internal/config`). Settings are read from
-  built-in defaults, then `$XDG_CONFIG_HOME/cbz/config.json`, then a file given
+  built-in defaults, then `$XDG_CONFIG_HOME/cbztool/config.json`, then a file given
   with the new global `-c`/`--config` flag (or `CBZ_CONFIG`), then environment
   variables; each layer overrides only the keys it sets. Unknown keys are an
   error.
@@ -26,8 +26,8 @@ Work toward 1.0.0.
     merged from every provider can't be preferred.
   - `providers.cache_ttl` — how long API responses are cached (default `24h`).
   - `rename.template` — the `cbz rename` name template.
-  - `credentials.<provider>` — `username`, plus `password_file` /
-    `api_key_file` pointing at secret files (absolute or `~/`; agenix and
+  - `credentials.<provider>` — `api_key_file` pointing at a secret file
+    (absolute or `~/`; agenix and
     sops-nix secrets work directly).
 - Secret files are read only by commands that contact a provider, so a
   missing API key file never breaks an offline command.
@@ -83,20 +83,27 @@ Work toward 1.0.0.
   **`cbz`** (was `cb`). Along with it:
   - Go module `github.com/AeBiCe/cbztool`; install with
     `go install github.com/AeBiCe/cbztool/cmd/cbz@latest`.
-  - Config and cache move to `$XDG_CONFIG_HOME/cbz/` and `$XDG_CACHE_HOME/cbz/`
-    (move an existing `~/.config/cb` to `~/.config/cbz`; the old cache can
+  - Config and cache move to `$XDG_CONFIG_HOME/cbztool/` and `$XDG_CACHE_HOME/cbztool/`
+    (move an existing `~/.config/cb` to `~/.config/cbztool`; the old cache can
     simply be deleted).
   - Environment variables are `CBZ_CONFIG`, `CBZ_PROVIDER`,
-    `CBZ_METRON_USERNAME`, `CBZ_METRON_PASSWORD`, `CBZ_COMICVINE_API_KEY`.
+    `CBZ_METRON_TOKEN`, `CBZ_COMICVINE_API_KEY`.
   - Online tagging notes its sources as `Tagged by cbztool: …` in `Notes`.
   - The Nix flake package is `cbztool` (`mainProgram = "cbz"`).
 
 - **Breaking: config file layout.** The old top-level `provider`, `metron` and
   `comicvine` keys are rejected with a migration hint; see
   `config.example.json` or `cbz config init`.
+- **Breaking: Metron uses an API token.** Metron is retiring username/password
+  (HTTP Basic) access to its API, so cbz now sends an API token
+  (`Authorization: Bearer`). Create one on your Metron profile page under
+  **API Tokens**, save it to a file and set `credentials.metron.api_key_file`,
+  or set `CBZ_METRON_TOKEN`. A config with `username` / `password_file` is
+  rejected with these instructions; `CBZ_METRON_USERNAME` /
+  `CBZ_METRON_PASSWORD` are no longer read.
 - **Breaking: secrets are no longer allowed inline** in the config file
-  (`password`, `api_key`). Use `password_file` / `api_key_file` or the
-  `CBZ_METRON_PASSWORD` / `CBZ_COMICVINE_API_KEY` environment variables. The
+  (`password`, `api_key`). Use `api_key_file` or the
+  `CBZ_METRON_TOKEN` / `CBZ_COMICVINE_API_KEY` environment variables. The
   config file can now be shared (dotfiles, home-manager) safely; the
   permission warning moved from the config file to the secret files.
 - `CBZ_PROVIDER` now moves the named provider to the front of

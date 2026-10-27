@@ -17,7 +17,7 @@ import (
 const defaultCacheTTL = 24 * time.Hour
 
 // diskCache is a best-effort, on-disk store of raw 200 response bodies keyed by
-// request URL. It lives under $XDG_CACHE_HOME/cbz (so it is safe to delete and is
+// request URL. It lives under $XDG_CACHE_HOME/cbztool (so it is safe to delete and is
 // never backed up). Every operation degrades silently to a miss on any I/O
 // error: the cache must never be the reason a tag fails.
 type diskCache struct {
@@ -25,8 +25,8 @@ type diskCache struct {
 	ttl time.Duration
 }
 
-// newDiskCache returns a cache rooted at $XDG_CACHE_HOME/cbz/<name> (falling back
-// to ~/.cache/cbz/<name>) whose entries stay fresh for ttl (defaultCacheTTL when
+// newDiskCache returns a cache rooted at $XDG_CACHE_HOME/cbztool/<name> (falling back
+// to ~/.cache/cbztool/<name>) whose entries stay fresh for ttl (defaultCacheTTL when
 // zero). If the directory can't be resolved or created, the returned cache is
 // disabled rather than an error — caching is an optimization, not a
 // requirement.
@@ -41,7 +41,7 @@ func newDiskCache(name string, ttl time.Duration) *diskCache {
 	return &diskCache{dir: dir, ttl: ttl}
 }
 
-// cacheDir resolves and creates $XDG_CACHE_HOME/cbz/<name> (or the ~/.cache
+// cacheDir resolves and creates $XDG_CACHE_HOME/cbztool/<name> (or the ~/.cache
 // fallback).
 func cacheDir(name string) (string, error) {
 	base := os.Getenv("XDG_CACHE_HOME")
@@ -52,7 +52,7 @@ func cacheDir(name string) (string, error) {
 		}
 		base = filepath.Join(home, ".cache")
 	}
-	dir := filepath.Join(base, "cbz", name)
+	dir := filepath.Join(base, "cbztool", name)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}

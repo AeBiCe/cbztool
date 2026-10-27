@@ -29,10 +29,10 @@ func isolate(t *testing.T) (cfgDir string) {
 	t.Helper()
 	xdg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", xdg)
-	for _, v := range []string{"CBZ_CONFIG", "CBZ_PROVIDER", "CBZ_METRON_USERNAME", "CBZ_METRON_PASSWORD", "CBZ_COMICVINE_API_KEY"} {
+	for _, v := range []string{"CBZ_CONFIG", "CBZ_PROVIDER", "CBZ_METRON_TOKEN", "CBZ_COMICVINE_API_KEY"} {
 		t.Setenv(v, "")
 	}
-	dir := filepath.Join(xdg, "cbz")
+	dir := filepath.Join(xdg, "cbztool")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestLayering(t *testing.T) {
 	secret := write(t, filepath.Join(t.TempDir(), "pw"), "hunter2\n", 0o600)
 	write(t, filepath.Join(dir, "config.json"), `{
 		"providers": {"order": ["cv"], "cache_ttl": "2h", "prefer": {"summary": "cv"}},
-		"credentials": {"metron": {"username": "me", "password_file": "`+secret+`"}}
+		"credentials": {"metron": {"api_key_file": "`+secret+`"}}
 	}`, 0o644)
 	extra := write(t, filepath.Join(t.TempDir(), "extra.json"), `{"rename": {"template": "{Series} {Number}"}}`, 0o644)
 
@@ -86,7 +86,7 @@ func TestLayering(t *testing.T) {
 	if cfg.Rename.Template != "{Series} {Number}" {
 		t.Errorf("template = %q", cfg.Rename.Template)
 	}
-	if m := cfg.Credentials["metron"]; m.Username != "me" || m.Password != "hunter2" {
+	if m := cfg.Credentials["metron"]; m.APIKey != "hunter2" {
 		t.Errorf("metron credentials = %+v", m)
 	}
 	if len(cfg.Files()) != 2 {
@@ -96,10 +96,10 @@ func TestLayering(t *testing.T) {
 
 func TestEnv(t *testing.T) {
 	dir := isolate(t)
-	// The password file doesn't exist: the env var supplies the secret, so the
+	// The token file doesn't exist: the env var supplies the secret, so the
 	// file is never read.
-	write(t, filepath.Join(dir, "config.json"), `{"credentials": {"metron": {"username": "file-user", "password_file": "/nonexistent/pw"}}}`, 0o644)
-	t.Setenv("CBZ_METRON_PASSWORD", "env-pw")
+	write(t, filepath.Join(dir, "config.json"), `{"credentials": {"metron": {"api_key_file": "/nonexistent/pw"}}}`, 0o644)
+	t.Setenv("CBZ_METRON_TOKEN", "env-tok")
 	t.Setenv("CBZ_COMICVINE_API_KEY", "env-key")
 	t.Setenv("CBZ_PROVIDER", "cv")
 
@@ -110,7 +110,7 @@ func TestEnv(t *testing.T) {
 	if !slices.Equal(cfg.Providers.Order, []string{"comicvine", "metron"}) {
 		t.Errorf("order = %v", cfg.Providers.Order)
 	}
-	if m := cfg.Credentials["metron"]; m.Username != "file-user" || m.Password != "env-pw" {
+	if m := cfg.Credentials["metron"]; m.APIKey != "env-tok" {
 		t.Errorf("metron = %+v", m)
 	}
 	if cfg.Credentials["comicvine"].APIKey != "env-key" {
@@ -135,7 +135,8 @@ func TestLoadErrors(t *testing.T) {
 	cases := []struct{ name, file, want string }{
 		{"unknown key", `{"renmae": {}}`, "unknown field"},
 		{"old layout", `{"provider": "metron", "metron": {"username": "u", "password": "p"}}`, "old config layout"},
-		{"inline password", `{"credentials": {"metron": {"username": "u", "password": "p"}}}`, "password_file"},
+		{"inline password", `{"credentials": {"metron": {"username": "u", "password": "p"}}}`, "API Tokens"},
+		{"metron password file", `{"credentials": {"metron": {"username": "u", "password_file": "/pw"}}}`, "api_key_file"},
 		{"inline api key", `{"credentials": {"comicvine": {"api_key": "k"}}}`, "api_key_file"},
 		{"unknown provider", `{"providers": {"order": ["gcd"]}}`, "unknown provider"},
 		{"duplicate order", `{"providers": {"order": ["metron", "mt"]}}`, "twice"},
@@ -145,8 +146,8 @@ func TestLoadErrors(t *testing.T) {
 		{"unknown field preferred", `{"providers": {"prefer": {"Nope": "metron"}}}`, "unknown ComicInfo field"},
 		{"bad ttl", `{"providers": {"cache_ttl": "-1h"}}`, "positive"},
 		{"empty template", `{"rename": {"template": " "}}`, "template"},
-		{"relative secret", `{"credentials": {"metron": {"password_file": "pw"}}}`, "absolute"},
-		{"missing secret", `{"credentials": {"metron": {"password_file": "/nonexistent/pw"}}}`, "password_file"},
+		{"relative secret", `{"credentials": {"metron": {"api_key_file": "pw"}}}`, "absolute"},
+		{"missing secret", `{"credentials": {"metron": {"api_key_file": "/nonexistent/pw"}}}`, "api_key_file"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -170,7 +171,7 @@ func TestExplicitMissing(t *testing.T) {
 func TestEmptySecret(t *testing.T) {
 	dir := isolate(t)
 	secret := write(t, filepath.Join(t.TempDir(), "pw"), " \n", 0o600)
-	write(t, filepath.Join(dir, "config.json"), `{"credentials": {"metron": {"password_file": "`+secret+`"}}}`, 0o644)
+	write(t, filepath.Join(dir, "config.json"), `{"credentials": {"metron": {"api_key_file": "`+secret+`"}}}`, 0o644)
 	if _, err := loadAll("", known, canon); err == nil || !strings.Contains(err.Error(), "empty") {
 		t.Errorf("err = %v, want an empty-secret error", err)
 	}
@@ -190,11 +191,11 @@ func TestExampleMatchesRepoFile(t *testing.T) {
 	dir := isolate(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	secrets := filepath.Join(home, ".config", "cbz")
+	secrets := filepath.Join(home, ".config", "cbztool")
 	if err := os.MkdirAll(secrets, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	write(t, filepath.Join(secrets, "metron-password"), "pw", 0o600)
+	write(t, filepath.Join(secrets, "metron-token"), "tok", 0o600)
 	write(t, filepath.Join(secrets, "comicvine-api-key"), "key", 0o600)
 	write(t, filepath.Join(dir, "config.json"), Example, 0o644)
 	cfg, err := loadAll("", known, canon)
@@ -205,7 +206,7 @@ func TestExampleMatchesRepoFile(t *testing.T) {
 	if !slices.Equal(cfg.Providers.Order, def.Providers.Order) || cfg.Providers.CacheTTL != def.Providers.CacheTTL || cfg.Rename != def.Rename {
 		t.Errorf("example differs from the built-in defaults: %+v", cfg)
 	}
-	if cfg.Credentials["metron"].Password != "pw" || cfg.Credentials["comicvine"].APIKey != "key" {
+	if cfg.Credentials["metron"].APIKey != "tok" || cfg.Credentials["comicvine"].APIKey != "key" {
 		t.Errorf("example secrets not resolved: %+v", cfg.Credentials)
 	}
 }
@@ -223,7 +224,7 @@ func loadAll(explicit string, known []string, canon func(string) string) (*Confi
 // from loading its settings.
 func TestLoadSkipsSecrets(t *testing.T) {
 	dir := isolate(t)
-	write(t, filepath.Join(dir, "config.json"), `{"credentials": {"metron": {"password_file": "/nonexistent/pw"}}}`, 0o644)
+	write(t, filepath.Join(dir, "config.json"), `{"credentials": {"metron": {"api_key_file": "/nonexistent/pw"}}}`, 0o644)
 	cfg, err := Load("", known, canon)
 	if err != nil {
 		t.Fatalf("Load read a secret file: %v", err)
