@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"codeberg.org/Nikode/cbztool/internal/comicinfo"
-	"codeberg.org/Nikode/cbztool/internal/provider"
+	"github.com/AeBiCe/cbztool/internal/comicinfo"
+	"github.com/AeBiCe/cbztool/internal/provider"
 )
 
 func TestIDProvider(t *testing.T) {

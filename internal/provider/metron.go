@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"codeberg.org/Nikode/cbztool/internal/comicinfo"
-	"codeberg.org/Nikode/cbztool/internal/version"
+	"github.com/AeBiCe/cbztool/internal/comicinfo"
+	"github.com/AeBiCe/cbztool/internal/version"
 )
 
 const metronBaseURL = "https://metron.cloud/api"
@@ -31,7 +31,7 @@ const maxResponseBytes = 8 << 20
 // us in good standing with Metron's bot / rate-limit protection — a missing or
 // generic UA is a common cause of 403s. If you fork cbztool, point the URL at
 // your fork.
-var userAgent = "cbztool/" + version.String() + " (+https://codeberg.org/Nikode/cbztool)"
+var userAgent = "cbztool/" + version.String() + " (+https://github.com/AeBiCe/cbztool)"
 
 // Retry policy for throttling (429/403) and transient server/network errors.
 const (

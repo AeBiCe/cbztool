@@ -11,9 +11,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"codeberg.org/Nikode/cbztool/internal/archive"
-	"codeberg.org/Nikode/cbztool/internal/comicinfo"
-	"codeberg.org/Nikode/cbztool/internal/term"
+	"github.com/AeBiCe/cbztool/internal/archive"
+	"github.com/AeBiCe/cbztool/internal/comicinfo"
+	"github.com/AeBiCe/cbztool/internal/term"
 )
 
 // Rename implements `cbz rename [-t template] [-n] <path>`: rename archives

@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"codeberg.org/Nikode/cbztool/internal/term"
+	"github.com/AeBiCe/cbztool/internal/term"
 )
 
 // skipAlreadyTagged is the routine skip of a re-run; it's the one skip that

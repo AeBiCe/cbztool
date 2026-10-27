@@ -11,9 +11,9 @@ import (
 	"os/exec"
 	"strings"
 
-	"codeberg.org/Nikode/cbztool/internal/archive"
-	"codeberg.org/Nikode/cbztool/internal/comicinfo"
-	"codeberg.org/Nikode/cbztool/internal/filename"
+	"github.com/AeBiCe/cbztool/internal/archive"
+	"github.com/AeBiCe/cbztool/internal/comicinfo"
+	"github.com/AeBiCe/cbztool/internal/filename"
 )
 
 // Edit implements `cbz edit <file.cbz>`: open the archive's ComicInfo as JSON

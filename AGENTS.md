@@ -171,4 +171,4 @@ provided via `devenv` (1.26+); if `go`/`gofmt` aren't on `PATH`, they live at
 - Favor simplicity and correctness over cleverness.
 - Naming: the project is **cbztool**; the command is **`cbz`** (it handles only
   `.cbz`, so the format name is accurate, and `cbz pack` reads naturally). The
-  module is `codeberg.org/Nikode/cbztool`; `cmd/cbz` holds `package main`.
+  module is `github.com/AeBiCe/cbztool`; `cmd/cbz` holds `package main`.

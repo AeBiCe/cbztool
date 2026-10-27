@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"codeberg.org/Nikode/cbztool/internal/archive"
-	"codeberg.org/Nikode/cbztool/internal/comicinfo"
+	"github.com/AeBiCe/cbztool/internal/archive"
+	"github.com/AeBiCe/cbztool/internal/comicinfo"
 )
 
 // captureStdout returns what f prints to stdout.

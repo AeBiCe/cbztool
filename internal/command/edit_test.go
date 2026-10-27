@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"codeberg.org/Nikode/cbztool/internal/archive"
-	"codeberg.org/Nikode/cbztool/internal/comicinfo"
+	"github.com/AeBiCe/cbztool/internal/archive"
+	"github.com/AeBiCe/cbztool/internal/comicinfo"
 )
 
 // setFields returns a fake editor that sets the given fields in the JSON.

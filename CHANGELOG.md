@@ -12,7 +12,7 @@ Work toward 1.0.0.
 
 - `cbz --version` (and `cbz version`) prints the version, taken from the git
   tag at build time (a pseudo-version between tags); the API User-Agent
-  carries it too (`cbztool/<version> (+https://codeberg.org/Nikode/cbztool)`).
+  carries it too (`cbztool/<version> (+https://github.com/AeBiCe/cbztool)`).
 - Licensed under GPL-3.0-or-later.
 
 - **Layered configuration** (`internal/config`). Settings are read from
@@ -81,8 +81,8 @@ Work toward 1.0.0.
 
 - **Breaking: renamed.** The project is now **cbztool** and the command is
   **`cbz`** (was `cb`). Along with it:
-  - Go module `codeberg.org/Nikode/cbztool`; install with
-    `go install codeberg.org/Nikode/cbztool/cmd/cbz@latest`.
+  - Go module `github.com/AeBiCe/cbztool`; install with
+    `go install github.com/AeBiCe/cbztool/cmd/cbz@latest`.
   - Config and cache move to `$XDG_CONFIG_HOME/cbz/` and `$XDG_CACHE_HOME/cbz/`
     (move an existing `~/.config/cb` to `~/.config/cbz`; the old cache can
     simply be deleted).

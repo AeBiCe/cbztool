@@ -6,9 +6,9 @@ import (
 	"os"
 	"sort"
 
-	"codeberg.org/Nikode/cbztool/internal/archive"
-	"codeberg.org/Nikode/cbztool/internal/filename"
-	"codeberg.org/Nikode/cbztool/internal/term"
+	"github.com/AeBiCe/cbztool/internal/archive"
+	"github.com/AeBiCe/cbztool/internal/filename"
+	"github.com/AeBiCe/cbztool/internal/term"
 )
 
 // Stats implements `cbz stats [-r] [-v] <path>`: a summary of a library — how

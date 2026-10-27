@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"codeberg.org/Nikode/cbztool/internal/archive"
-	"codeberg.org/Nikode/cbztool/internal/comicinfo"
+	"github.com/AeBiCe/cbztool/internal/archive"
+	"github.com/AeBiCe/cbztool/internal/comicinfo"
 )
 
 func pngPage(t *testing.T, w, h int) []byte {

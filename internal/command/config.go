@@ -8,8 +8,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"codeberg.org/Nikode/cbztool/internal/config"
-	"codeberg.org/Nikode/cbztool/internal/provider"
+	"github.com/AeBiCe/cbztool/internal/config"
+	"github.com/AeBiCe/cbztool/internal/provider"
 )
 
 // configFile is the -c/--config path given before the command ("" for none).

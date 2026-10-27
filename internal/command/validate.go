@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"codeberg.org/Nikode/cbztool/internal/archive"
-	"codeberg.org/Nikode/cbztool/internal/term"
+	"github.com/AeBiCe/cbztool/internal/archive"
+	"github.com/AeBiCe/cbztool/internal/term"
 )
 
 // Validate implements `cbz validate|vl [--full] <path>`: check each archive's

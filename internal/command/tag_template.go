@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"codeberg.org/Nikode/cbztool/internal/archive"
-	"codeberg.org/Nikode/cbztool/internal/comicinfo"
-	"codeberg.org/Nikode/cbztool/internal/filename"
+	"github.com/AeBiCe/cbztool/internal/archive"
+	"github.com/AeBiCe/cbztool/internal/comicinfo"
+	"github.com/AeBiCe/cbztool/internal/filename"
 )
 
 // templateIssueFields are the per-issue fields a template lists under each

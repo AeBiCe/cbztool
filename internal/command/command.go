@@ -16,8 +16,8 @@ import (
 	"strings"
 	"unicode"
 
-	"codeberg.org/Nikode/cbztool/internal/archive"
-	"codeberg.org/Nikode/cbztool/internal/comicinfo"
+	"github.com/AeBiCe/cbztool/internal/archive"
+	"github.com/AeBiCe/cbztool/internal/comicinfo"
 )
 
 // bidiOverrides are Unicode formatting characters that can reorder how text is

@@ -12,10 +12,10 @@ import (
 	"strconv"
 	"strings"
 
-	"codeberg.org/Nikode/cbztool/internal/archive"
-	"codeberg.org/Nikode/cbztool/internal/comicinfo"
-	"codeberg.org/Nikode/cbztool/internal/filename"
-	"codeberg.org/Nikode/cbztool/internal/term"
+	"github.com/AeBiCe/cbztool/internal/archive"
+	"github.com/AeBiCe/cbztool/internal/comicinfo"
+	"github.com/AeBiCe/cbztool/internal/filename"
+	"github.com/AeBiCe/cbztool/internal/term"
 )
 
 // TagManual implements `cbz tag -m`: write ComicInfo.xml from local input only,

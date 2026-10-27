@@ -4,7 +4,7 @@
 // and a "+dirty" suffix when built with uncommitted changes. Builds without
 // git metadata (Nix builds from a source tarball) pass it in instead:
 //
-//	-ldflags "-X codeberg.org/Nikode/cbztool/internal/version.version=1.0.0"
+//	-ldflags "-X github.com/AeBiCe/cbztool/internal/version.version=1.0.0"
 package version
 
 import (

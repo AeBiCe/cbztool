@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"codeberg.org/Nikode/cbztool/internal/archive"
+	"github.com/AeBiCe/cbztool/internal/archive"
 )
 
 func entryNames(t *testing.T, path string) []string {

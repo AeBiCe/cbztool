@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"testing"
 
-	"codeberg.org/Nikode/cbztool/internal/comicinfo"
-	"codeberg.org/Nikode/cbztool/internal/imagemeta"
+	"github.com/AeBiCe/cbztool/internal/comicinfo"
+	"github.com/AeBiCe/cbztool/internal/imagemeta"
 )
 
 func TestComicPages(t *testing.T) {

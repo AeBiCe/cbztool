@@ -26,14 +26,14 @@ ZIPs), and **simplicity**.
 Requires **Go 1.26+** (provided via `devenv` in this repo).
 
 ```sh
-go install codeberg.org/Nikode/cbztool/cmd/cbz@latest   # installs cbz into $(go env GOPATH)/bin
+go install github.com/AeBiCe/cbztool/cmd/cbz@latest   # installs cbz into $(go env GOPATH)/bin
 # or, from a checkout:
 go build -o cbz ./cmd/cbz   # produces ./cbz
 go test ./...               # optional: run the test suite
 ```
 
-With Nix: `nix run git+https://codeberg.org/Nikode/cbztool`, or
-`nix profile install git+https://codeberg.org/Nikode/cbztool`.
+With Nix: `nix run github:AeBiCe/cbztool`, or
+`nix profile install github:AeBiCe/cbztool`.
 
 Put the resulting `cbz` binary on your `PATH`, then:
 

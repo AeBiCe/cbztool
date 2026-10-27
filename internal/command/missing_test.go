@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"codeberg.org/Nikode/cbztool/internal/archive"
-	"codeberg.org/Nikode/cbztool/internal/comicinfo"
-	"codeberg.org/Nikode/cbztool/internal/filename"
-	"codeberg.org/Nikode/cbztool/internal/provider"
+	"github.com/AeBiCe/cbztool/internal/archive"
+	"github.com/AeBiCe/cbztool/internal/comicinfo"
+	"github.com/AeBiCe/cbztool/internal/filename"
+	"github.com/AeBiCe/cbztool/internal/provider"
 )
 
 // fakeLister adds SeriesIssueLister to fakeProvider.

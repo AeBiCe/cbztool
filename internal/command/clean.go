@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"codeberg.org/Nikode/cbztool/internal/archive"
-	"codeberg.org/Nikode/cbztool/internal/term"
+	"github.com/AeBiCe/cbztool/internal/archive"
+	"github.com/AeBiCe/cbztool/internal/term"
 )
 
 // Clean implements `cbz clean [--extra] [--dry-run] <path>`: remove OS junk

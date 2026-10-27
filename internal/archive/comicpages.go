@@ -1,6 +1,6 @@
 package archive
 
-import "codeberg.org/Nikode/cbztool/internal/comicinfo"
+import "github.com/AeBiCe/cbztool/internal/comicinfo"
 
 // ComicPages builds the ComicInfo <Pages> list for pages (in reading order,
 // as returned by Archive.Pages). Image index, size and dimensions come from

@@ -13,9 +13,9 @@ import (
 	"os"
 	"strings"
 
-	"codeberg.org/Nikode/cbztool/internal/command"
-	"codeberg.org/Nikode/cbztool/internal/term"
-	"codeberg.org/Nikode/cbztool/internal/version"
+	"github.com/AeBiCe/cbztool/internal/command"
+	"github.com/AeBiCe/cbztool/internal/term"
+	"github.com/AeBiCe/cbztool/internal/version"
 )
 
 func main() {

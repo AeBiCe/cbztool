@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/Nikode/cbztool/internal/comicinfo"
+	"github.com/AeBiCe/cbztool/internal/comicinfo"
 )
 
 // ErrNotFound is returned (wrapped) by a provider when a lookup resolves to no

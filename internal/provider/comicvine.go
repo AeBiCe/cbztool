@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"codeberg.org/Nikode/cbztool/internal/comicinfo"
+	"github.com/AeBiCe/cbztool/internal/comicinfo"
 )
 
 const comicvineBaseURL = "https://comicvine.gamespot.com/api"

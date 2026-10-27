@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/Nikode/cbztool/internal/archive"
-	"codeberg.org/Nikode/cbztool/internal/filename"
-	"codeberg.org/Nikode/cbztool/internal/provider"
-	"codeberg.org/Nikode/cbztool/internal/term"
+	"github.com/AeBiCe/cbztool/internal/archive"
+	"github.com/AeBiCe/cbztool/internal/filename"
+	"github.com/AeBiCe/cbztool/internal/provider"
+	"github.com/AeBiCe/cbztool/internal/term"
 )
 
 // Missing implements `cbz missing [flags] <dir>`: for each series in a

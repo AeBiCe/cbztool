@@ -24,8 +24,8 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/Nikode/cbztool/internal/comicinfo"
-	"codeberg.org/Nikode/cbztool/internal/term"
+	"github.com/AeBiCe/cbztool/internal/comicinfo"
+	"github.com/AeBiCe/cbztool/internal/term"
 )
 
 // Config is cbz's resolved configuration.

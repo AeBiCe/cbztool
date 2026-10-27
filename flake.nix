@@ -39,12 +39,12 @@
           ldflags = [
             "-s"
             "-w"
-            "-X codeberg.org/Nikode/cbztool/internal/version.version=${version}"
+            "-X github.com/AeBiCe/cbztool/internal/version.version=${version}"
           ];
 
           meta = {
             description = "Fast, secure, zero-dependency CLI for .cbz comic archives";
-            homepage = "https://codeberg.org/Nikode/cbztool";
+            homepage = "https://github.com/AeBiCe/cbztool";
             license = pkgs.lib.licenses.gpl3Plus;
             mainProgram = "cbz";
             platforms = pkgs.lib.platforms.unix;
@@ -54,7 +54,7 @@
         default = cbztool;
       });
 
-      # `nix run .` / `nix run git+https://codeberg.org/Nikode/cbztool`
+      # `nix run .` / `nix run github:AeBiCe/cbztool`
       apps = forAllSystems (pkgs: {
         default = {
           type = "app";

@@ -4,8 +4,8 @@ import (
 	"flag"
 	"fmt"
 
-	"codeberg.org/Nikode/cbztool/internal/archive"
-	"codeberg.org/Nikode/cbztool/internal/term"
+	"github.com/AeBiCe/cbztool/internal/archive"
+	"github.com/AeBiCe/cbztool/internal/term"
 )
 
 // List implements `cbz list|ls <path>`: print the contents of each archive.

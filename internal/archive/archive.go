@@ -16,8 +16,8 @@ import (
 	"strconv"
 	"strings"
 
-	"codeberg.org/Nikode/cbztool/internal/comicinfo"
-	"codeberg.org/Nikode/cbztool/internal/imagemeta"
+	"github.com/AeBiCe/cbztool/internal/comicinfo"
+	"github.com/AeBiCe/cbztool/internal/imagemeta"
 )
 
 // ComicInfoName is the canonical metadata filename inside a .cbz archive.

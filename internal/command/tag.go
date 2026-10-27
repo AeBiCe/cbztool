@@ -13,11 +13,11 @@ import (
 	"time"
 	"unicode"
 
-	"codeberg.org/Nikode/cbztool/internal/archive"
-	"codeberg.org/Nikode/cbztool/internal/comicinfo"
-	"codeberg.org/Nikode/cbztool/internal/config"
-	"codeberg.org/Nikode/cbztool/internal/filename"
-	"codeberg.org/Nikode/cbztool/internal/provider"
+	"github.com/AeBiCe/cbztool/internal/archive"
+	"github.com/AeBiCe/cbztool/internal/comicinfo"
+	"github.com/AeBiCe/cbztool/internal/config"
+	"github.com/AeBiCe/cbztool/internal/filename"
+	"github.com/AeBiCe/cbztool/internal/provider"
 )
 
 // Tag implements `cbz tag [flags] <path>`: populate ComicInfo.xml from an online

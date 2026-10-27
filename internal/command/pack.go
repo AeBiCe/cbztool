@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"codeberg.org/Nikode/cbztool/internal/archive"
-	"codeberg.org/Nikode/cbztool/internal/term"
+	"github.com/AeBiCe/cbztool/internal/archive"
+	"github.com/AeBiCe/cbztool/internal/term"
 )
 
 // Pack implements `cbz pack [--force] [--tag] [--manual] <dir>`: build a new .cbz

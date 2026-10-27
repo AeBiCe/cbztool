@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	"codeberg.org/Nikode/cbztool/internal/comicinfo"
-	"codeberg.org/Nikode/cbztool/internal/provider"
-	"codeberg.org/Nikode/cbztool/internal/term"
+	"github.com/AeBiCe/cbztool/internal/comicinfo"
+	"github.com/AeBiCe/cbztool/internal/provider"
+	"github.com/AeBiCe/cbztool/internal/term"
 )
 
 // sources is the set of providers an online run draws on and how their data is

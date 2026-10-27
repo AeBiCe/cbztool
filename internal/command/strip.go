@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"codeberg.org/Nikode/cbztool/internal/archive"
-	"codeberg.org/Nikode/cbztool/internal/term"
+	"github.com/AeBiCe/cbztool/internal/archive"
+	"github.com/AeBiCe/cbztool/internal/term"
 )
 
 // Strip implements `cbz strip <path>`: remove ComicInfo.xml.
