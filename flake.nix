@@ -1,7 +1,7 @@
 {
-  description = "cb — a fast, secure, zero-dependency CLI for .cbz comic archives";
+  description = "cbztool — a fast, secure, zero-dependency CLI (cbz) for .cbz comic archives";
 
-  # Single input by design: cb is zero-dependency, and the flake keeps that
+  # Single input by design: cbztool is zero-dependency, and the flake keeps that
   # spirit — nixpkgs is the only thing we pull in (no flake-utils, etc.).
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -17,42 +17,48 @@
     in
     {
       packages = forAllSystems (pkgs: rec {
-        cb = pkgs.buildGoModule {
-          pname = "cb";
-          version = "0.1.0";
+        cbztool = pkgs.buildGoModule rec {
+          pname = "cbztool";
+          # Flake builds have no .git for Go to read the version from, so name
+          # the commit; tagged releases are packaged (e.g. in nixpkgs) with the
+          # tag's version instead.
+          version = "0-unstable-${self.shortRev or self.dirtyShortRev or "unknown"}";
 
           src = ./.;
 
-          # cb is stdlib-only (zero third-party dependencies), so there is
+          # cbztool is stdlib-only (zero third-party dependencies), so there is
           # nothing to vendor. If a dependency is ever added, switch this to the
           # vendor hash Nix prints on the first failed build.
           vendorHash = null;
 
-          # Build just the root command (package main at the repo root).
-          subPackages = [ "." ];
+          # Build just the command; the binary is named after its directory.
+          subPackages = [ "cmd/cbz" ];
 
-          # Smaller, reproducible binary; strip symbol table and DWARF.
-          ldflags = [ "-s" "-w" ];
+          # Strip symbol table and DWARF, and stamp the version for --version
+          # and the API User-Agent (internal/version).
+          ldflags = [
+            "-s"
+            "-w"
+            "-X codeberg.org/Nikode/cbztool/internal/version.version=${version}"
+          ];
 
           meta = {
             description = "Fast, secure, zero-dependency CLI for .cbz comic archives";
-            homepage = "https://codeberg.org/Nikode/cb";
-            # TODO: must match the LICENSE file you add to the repo (see ROADMAP
-            # "Packaging & distribution"). MIT is a placeholder.
-            license = pkgs.lib.licenses.mit;
-            mainProgram = "cb";
+            homepage = "https://codeberg.org/Nikode/cbztool";
+            license = pkgs.lib.licenses.gpl3Plus;
+            mainProgram = "cbz";
             platforms = pkgs.lib.platforms.unix;
           };
         };
 
-        default = cb;
+        default = cbztool;
       });
 
-      # `nix run .` / `nix run codeberg-flake#cb`
+      # `nix run .` / `nix run git+https://codeberg.org/Nikode/cbztool`
       apps = forAllSystems (pkgs: {
         default = {
           type = "app";
-          program = "${self.packages.${pkgs.system}.cb}/bin/cb";
+          program = "${self.packages.${pkgs.system}.cbztool}/bin/cbz";
         };
       });
 
@@ -64,9 +70,9 @@
         };
       });
 
-      # Lets other flakes do `overlays = [ cb.overlays.default ];` to get pkgs.cb.
+      # Lets other flakes do `overlays = [ cbztool.overlays.default ];` to get pkgs.cbztool.
       overlays.default = final: _prev: {
-        cb = self.packages.${final.system}.cb;
+        cbztool = self.packages.${final.system}.cbztool;
       };
 
       formatter = forAllSystems (pkgs: pkgs.nixpkgs-fmt);

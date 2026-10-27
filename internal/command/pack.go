@@ -8,11 +8,11 @@ import (
 	"sort"
 	"strings"
 
-	"cb/internal/archive"
-	"cb/internal/provider"
+	"codeberg.org/Nikode/cbztool/internal/archive"
+	"codeberg.org/Nikode/cbztool/internal/term"
 )
 
-// Pack implements `cb pack [--force] [--tag] [--manual] <dir>`: build a new .cbz
+// Pack implements `cbz pack [--force] [--tag] [--manual] <dir>`: build a new .cbz
 // from the image files in a directory. The archive is named after the directory
 // and written as a sibling. Pack is pure creation — it does not prompt — but
 // --tag (-t) chains a `tag` afterward, and --manual (-m) makes that chained tag
@@ -26,7 +26,7 @@ func Pack(args []string) error {
 	fs.BoolVar(manual, "m", false, "shorthand for --manual")
 	_ = fs.Parse(args)
 	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: cb pack [--force] [--tag] [--manual] <dir>")
+		return fmt.Errorf("usage: cbz pack [--force] [--tag] [--manual] <dir>")
 	}
 	dir := fs.Arg(0)
 
@@ -57,12 +57,12 @@ func Pack(args []string) error {
 	fmt.Printf("packed %d images -> %s\n", len(images), Sanitize(out))
 
 	if warn := pageOrderWarning(images); warn != "" {
-		fmt.Fprintf(os.Stderr, "cb: warning: %s\n", warn)
+		term.Warnf("%s", warn)
 	}
 
 	// Advisory page-sequence check: report problems but never fail the pack.
-	if _, verr := validateOne(out); verr != nil {
-		fmt.Fprintf(os.Stderr, "cb: %s: %s\n", Sanitize(out), Sanitize(verr.Error()))
+	if _, verr := validateOne(out, false); verr != nil {
+		term.Errorf("%s: %s", Sanitize(out), Sanitize(verr.Error()))
 	}
 
 	if !*tagAfter {
@@ -71,11 +71,11 @@ func Pack(args []string) error {
 	if *manual {
 		return tagManualSingle(out, true)
 	}
-	prov, err := openProvider(false)
+	src, err := openProviders("", false, false)
 	if err != nil {
 		return err
 	}
-	return tagFileOnline([]provider.Provider{prov}, out, "", false, true, false, false)
+	return tagFileOnline(src, nil, out, "", false, true, false, false)
 }
 
 // collectImages reads the (non-recursive) image files in dir into an entry map
@@ -117,7 +117,7 @@ func collectImages(dir string) (entries map[string][]byte, images []string, err 
 		// following a symlink would slurp the *target's* contents — e.g. a
 		// "cover.jpg" -> /etc/passwd link — into the archive.
 		if !e.Type().IsRegular() {
-			fmt.Fprintf(os.Stderr, "cb: skipping non-regular file %s\n", Sanitize(name))
+			term.Warnf("skipping non-regular file %s", Sanitize(name))
 			continue
 		}
 		switch {

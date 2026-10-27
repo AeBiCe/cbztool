@@ -3,7 +3,7 @@ package command
 import (
 	"testing"
 
-	"cb/internal/provider"
+	"codeberg.org/Nikode/cbztool/internal/provider"
 )
 
 func TestEditionMarker(t *testing.T) {

@@ -3,31 +3,33 @@ package command
 import (
 	"flag"
 	"fmt"
-	"os"
 	"reflect"
 	"strings"
 
-	"cb/internal/archive"
-	"cb/internal/comicinfo"
+	"codeberg.org/Nikode/cbztool/internal/archive"
+	"codeberg.org/Nikode/cbztool/internal/comicinfo"
+	"codeberg.org/Nikode/cbztool/internal/term"
 )
 
-// Info implements `cb info <path>`: print ComicInfo.xml metadata.
+// Info implements `cbz info <path>`: print ComicInfo.xml metadata.
 func Info(args []string) error {
 	fs := flag.NewFlagSet("info", flag.ExitOnError)
 	_ = fs.Parse(args)
 	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: cb info <path>")
+		return fmt.Errorf("usage: cbz info <path>")
 	}
 	files, err := cbzFiles(fs.Arg(0))
 	if err != nil {
 		return err
 	}
+	failed := 0
 	for _, f := range files {
 		if err := infoOne(f); err != nil {
-			fmt.Fprintf(os.Stderr, "cb: %s: %s\n", Sanitize(f), Sanitize(err.Error()))
+			term.Errorf("%s: %s", Sanitize(f), Sanitize(err.Error()))
+			failed++
 		}
 	}
-	return nil
+	return failedErr(failed, len(files))
 }
 
 func infoOne(path string) error {
@@ -76,6 +78,32 @@ func printComicInfo(ci *comicinfo.ComicInfo) {
 			}
 		}
 	}
+	if ci.Pages != nil {
+		fmt.Printf("  %-20s %s\n", "Pages", pagesSummary(ci.Pages))
+	}
+}
+
+// pagesSummary condenses <Pages> to one line: how many pages are described,
+// how many are double spreads, and any page types set.
+func pagesSummary(p *comicinfo.Pages) string {
+	double := 0
+	var types []string
+	for _, pg := range p.Page {
+		if pg.DoublePage {
+			double++
+		}
+		if pg.Type != "" {
+			types = append(types, fmt.Sprintf("%d=%s", pg.Image+1, pg.Type))
+		}
+	}
+	s := fmt.Sprintf("%d described", len(p.Page))
+	if double > 0 {
+		s += fmt.Sprintf(", %d double-page", double)
+	}
+	if len(types) > 0 {
+		s += "; " + Sanitize(strings.Join(types, ", "))
+	}
+	return s
 }
 
 // xmlLocalName extracts the element name from an xml struct tag (dropping any

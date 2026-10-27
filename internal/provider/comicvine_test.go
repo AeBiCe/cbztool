@@ -21,7 +21,7 @@ func newTestComicVine(srv *httptest.Server) *comicvine {
 	}
 }
 
-// sampleCVIssue mirrors the subset of fields cb consumes from a ComicVine
+// sampleCVIssue mirrors the subset of fields cbz consumes from a ComicVine
 // /issue/4000-{id}/ response, so the JSON tags and mapping are verified offline.
 const sampleCVIssue = `{
   "status_code": 1,
@@ -42,19 +42,28 @@ const sampleCVIssue = `{
     ],
     "character_credits": [{"name": "Keres"}, {"name": "Shade"}],
     "team_credits": [{"name": "The Underworld"}],
-    "story_arc_credits": [{"name": "Descent"}]
+    "story_arc_credits": [{"name": "Descent"}],
+    "location_credits": [{"name": "Tartarus"}, {"name": "Olympus"}]
   }
 }`
 
+// sampleCVVolume is the /volume/4050-{id}/?field_list=publisher response
+// IssueByID reads the publisher from.
+const sampleCVVolume = `{"status_code": 1, "results": {"publisher": {"name": "Vault Comics"}}}`
+
 func TestCVIssueMapping(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/issue/4000-1159665/" {
-			t.Errorf("path = %q, want /issue/4000-1159665/", r.URL.Path)
-		}
 		if r.URL.Query().Get("api_key") != "secret-key" {
 			t.Errorf("api_key not sent")
 		}
-		w.Write([]byte(sampleCVIssue))
+		switch r.URL.Path {
+		case "/issue/4000-1159665/":
+			w.Write([]byte(sampleCVIssue))
+		case "/volume/4050-155967/":
+			w.Write([]byte(sampleCVVolume))
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
 	}))
 	defer srv.Close()
 
@@ -66,6 +75,9 @@ func TestCVIssueMapping(t *testing.T) {
 	}
 
 	checks := map[string]struct{ got, want string }{
+		"ID":          {ci.ID, "1159665"},
+		"Publisher":   {ci.Publisher, "Vault Comics"},
+		"Locations":   {ci.Locations, "Tartarus, Olympus"},
 		"Series":      {ci.Series, "Keres: Blood and Shadow"},
 		"Number":      {ci.Number, "1"},
 		"Title":       {ci.Title, "Blood and Shadow"},
@@ -84,8 +96,8 @@ func TestCVIssueMapping(t *testing.T) {
 			t.Errorf("%s = %q, want %q", field, c.got, c.want)
 		}
 	}
-	if ci.Year != 2024 || ci.Month != 5 || ci.Day != 1 {
-		t.Errorf("date = %d-%d-%d, want 2024-5-1", ci.Year, ci.Month, ci.Day)
+	if ci.Year != 2024 || ci.Month != 5 || ci.Day != 15 {
+		t.Errorf("date = %d-%d-%d, want 2024-5-15 (store date)", ci.Year, ci.Month, ci.Day)
 	}
 }
 

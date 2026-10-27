@@ -1,9 +1,23 @@
 package comicinfo
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestOverlay(t *testing.T) {
+	base := &ComicInfo{Series: "Saga", Number: "1", Writer: "Brian K. Vaughan", Year: 2012}
+	base.Overlay(&ComicInfo{Title: "Chapter One", Year: 2013})
+	want := &ComicInfo{Series: "Saga", Number: "1", Title: "Chapter One", Writer: "Brian K. Vaughan", Year: 2013}
+	if !reflect.DeepEqual(base, want) {
+		t.Errorf("Overlay:\n got %+v\nwant %+v", base, want)
+	}
+	base.Overlay(nil) // no-op
+	if !reflect.DeepEqual(base, want) {
+		t.Errorf("Overlay(nil) changed ci: %+v", base)
+	}
+}
 
 func TestComicInfoOmitEmpty(t *testing.T) {
 	ci := &ComicInfo{Series: "Squirrel-Man", Number: "3", PageCount: 12}

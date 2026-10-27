@@ -1,10 +1,19 @@
 {
-  "provider": "metron",
-  "metron": {
-    "username": "YOUR_METRON_USERNAME",
-    "password": "YOUR_METRON_PASSWORD"
+  "providers": {
+    "order": ["metron", "comicvine"],
+    "prefer": {},
+    "cache_ttl": "24h"
   },
-  "comicvine": {
-    "api_key": "YOUR_COMICVINE_API_KEY"
+  "rename": {
+    "template": "{Series}[ ({Year})] #{Number:3}"
+  },
+  "credentials": {
+    "metron": {
+      "username": "YOUR_METRON_USERNAME",
+      "password_file": "~/.config/cbz/metron-password"
+    },
+    "comicvine": {
+      "api_key_file": "~/.config/cbz/comicvine-api-key"
+    }
   }
 }

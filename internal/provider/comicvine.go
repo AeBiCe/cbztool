@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"cb/internal/comicinfo"
+	"codeberg.org/Nikode/cbztool/internal/comicinfo"
 )
 
 const comicvineBaseURL = "https://comicvine.gamespot.com/api"
@@ -27,9 +27,9 @@ const comicvineInterval = 1 * time.Second
 func init() {
 	registerProvider("comicvine", func(cfg ProviderConfig) (Provider, error) {
 		if cfg.APIKey == "" {
-			return nil, fmt.Errorf("comicvine requires an API key (config file comicvine.api_key or CB_COMICVINE_API_KEY)")
+			return nil, fmt.Errorf("comicvine requires an API key (credentials.comicvine.api_key_file in the config, or CBZ_COMICVINE_API_KEY)")
 		}
-		return newComicVine(cfg.APIKey), nil
+		return newComicVine(cfg.APIKey, cfg.CacheTTL), nil
 	})
 }
 
@@ -39,7 +39,7 @@ func init() {
 // shared retry/backoff (apiGet) and the same two-layer (in-process + on-disk)
 // response cache as the Metron backend.
 //
-// ComicVine maps cleanly onto cb's model: a "volume" is our series, and an
+// ComicVine maps cleanly onto cbz's model: a "volume" is our series, and an
 // "issue" is our issue. One ComicVine quirk drives the design here — errors are
 // reported in the JSON envelope's status_code with an HTTP 200, so get inspects
 // status_code (1 = OK, 101 = not found, 100 = bad key) rather than trusting the
@@ -56,13 +56,13 @@ type comicvine struct {
 	cache map[string][]byte // url -> raw OK response body, for the current run
 }
 
-func newComicVine(apiKey string) *comicvine {
+func newComicVine(apiKey string, cacheTTL time.Duration) *comicvine {
 	return &comicvine{
 		apiKey:  apiKey,
 		baseURL: comicvineBaseURL,
 		http:    &http.Client{Timeout: 30 * time.Second},
 		limiter: newRateLimiter(comicvineInterval),
-		disk:    newDiskCache("comicvine"),
+		disk:    newDiskCache("comicvine", cacheTTL),
 		cache:   make(map[string][]byte),
 	}
 }
@@ -180,6 +180,7 @@ type cvIssue struct {
 	CharacterCredits []cvNamed `json:"character_credits"`
 	TeamCredits      []cvNamed `json:"team_credits"`
 	StoryArcCredits  []cvNamed `json:"story_arc_credits"`
+	LocationCredits  []cvNamed `json:"location_credits"`
 }
 
 // --- Provider implementation ---
@@ -219,7 +220,7 @@ func (c *comicvine) SearchSeries(ctx context.Context, query string) ([]SeriesRes
 
 // IssueByNumber finds the one issue of a volume with the given number, then
 // fetches its full metadata.
-func (c *comicvine) IssueByNumber(ctx context.Context, seriesID, number string) (*comicinfo.ComicInfo, error) {
+func (c *comicvine) IssueByNumber(ctx context.Context, seriesID, number string) (*Issue, error) {
 	if !isPositiveIntID(seriesID) {
 		return nil, fmt.Errorf("comicvine: invalid volume id %q: %w", seriesID, ErrNotFound)
 	}
@@ -243,7 +244,7 @@ func (c *comicvine) IssueByNumber(ctx context.Context, seriesID, number string) 
 // IssueByID fetches one issue's full metadata. ComicVine detail URLs prefix the
 // id with the resource-type code (4000 for issues); a bare id or a full
 // "4000-<id>" are both accepted from the command line.
-func (c *comicvine) IssueByID(ctx context.Context, issueID string) (*comicinfo.ComicInfo, error) {
+func (c *comicvine) IssueByID(ctx context.Context, issueID string) (*Issue, error) {
 	id := normalizeCVID(issueID)
 	if !isPositiveIntID(id) {
 		return nil, fmt.Errorf("comicvine: invalid issue id %q: %w", issueID, ErrNotFound)
@@ -254,7 +255,31 @@ func (c *comicvine) IssueByID(ctx context.Context, issueID string) (*comicinfo.C
 	if err := c.get(ctx, "/issue/4000-"+id+"/", nil, &resp); err != nil {
 		return nil, err
 	}
-	return cvIssueToComicInfo(&resp.Results), nil
+	ci := cvIssueToComicInfo(&resp.Results)
+	if vol := resp.Results.Volume.ID; vol > 0 {
+		ci.Publisher = c.volumePublisher(ctx, vol)
+	}
+	return &Issue{ComicInfo: ci, ID: strconv.Itoa(resp.Results.ID)}, nil
+}
+
+// volumePublisher returns a volume's publisher name, which ComicVine keeps on
+// the volume rather than the issue. It is one small request per volume (cached
+// like every other GET, so a whole series costs one call) and best-effort:
+// Publisher is optional, so a failure here never fails the issue.
+func (c *comicvine) volumePublisher(ctx context.Context, volumeID int) string {
+	q := url.Values{}
+	q.Set("field_list", "publisher")
+	var resp struct {
+		Results struct {
+			Publisher struct {
+				Name string `json:"name"`
+			} `json:"publisher"`
+		} `json:"results"`
+	}
+	if err := c.get(ctx, fmt.Sprintf("/volume/4050-%d/", volumeID), q, &resp); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(resp.Results.Publisher.Name)
 }
 
 // normalizeCVID strips an optional ComicVine resource-type prefix ("4000-")
@@ -314,11 +339,10 @@ func (c *comicvine) ListIssues(ctx context.Context, seriesID string) ([]IssueStu
 	return out, nil
 }
 
-// cvIssueToComicInfo maps a ComicVine issue onto cb's ComicInfo. PageCount is
+// cvIssueToComicInfo maps a ComicVine issue onto cbz's ComicInfo. PageCount is
 // not exposed by ComicVine (and is overwritten from the archive before writing
-// anyway); Publisher lives on the volume, not the issue, so it is left to the
-// resolved series rather than fetched separately. This function is pure for
-// offline testing.
+// anyway); Publisher lives on the volume, not the issue, so IssueByID fills it
+// separately (volumePublisher). This function is pure for offline testing.
 func cvIssueToComicInfo(iss *cvIssue) *comicinfo.ComicInfo {
 	ci := &comicinfo.ComicInfo{
 		Series:     strings.TrimSpace(iss.Volume.Name),
@@ -329,8 +353,10 @@ func cvIssueToComicInfo(iss *cvIssue) *comicinfo.ComicInfo {
 		Characters: cvNames(iss.CharacterCredits),
 		Teams:      cvNames(iss.TeamCredits),
 		StoryArc:   cvNames(iss.StoryArcCredits),
+		Locations:  cvNames(iss.LocationCredits),
 	}
-	if y, mo, d, ok := parseISODate(firstNonEmpty(iss.CoverDate, iss.StoreDate)); ok {
+	// Store (on-sale) date first: cover dates are usually a nominal 1st-of-month.
+	if y, mo, d, ok := parseISODate(firstNonEmpty(iss.StoreDate, iss.CoverDate)); ok {
 		ci.Year, ci.Month, ci.Day = y, mo, d
 	}
 	for _, person := range iss.PersonCredits {

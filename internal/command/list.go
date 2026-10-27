@@ -3,28 +3,30 @@ package command
 import (
 	"flag"
 	"fmt"
-	"os"
 
-	"cb/internal/archive"
+	"codeberg.org/Nikode/cbztool/internal/archive"
+	"codeberg.org/Nikode/cbztool/internal/term"
 )
 
-// List implements `cb list|ls <path>`: print the contents of each archive.
+// List implements `cbz list|ls <path>`: print the contents of each archive.
 func List(args []string) error {
 	fs := flag.NewFlagSet("list", flag.ExitOnError)
 	_ = fs.Parse(args)
 	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: cb list <path>")
+		return fmt.Errorf("usage: cbz list <path>")
 	}
 	files, err := cbzFiles(fs.Arg(0))
 	if err != nil {
 		return err
 	}
+	failed := 0
 	for _, f := range files {
 		if err := listOne(f); err != nil {
-			fmt.Fprintf(os.Stderr, "cb: %s: %s\n", Sanitize(f), Sanitize(err.Error()))
+			term.Errorf("%s: %s", Sanitize(f), Sanitize(err.Error()))
+			failed++
 		}
 	}
-	return nil
+	return failedErr(failed, len(files))
 }
 
 func listOne(path string) error {

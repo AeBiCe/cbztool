@@ -13,53 +13,44 @@ import (
 	"time"
 	"unicode"
 
-	"cb/internal/archive"
-	"cb/internal/comicinfo"
-	"cb/internal/filename"
-	"cb/internal/provider"
+	"codeberg.org/Nikode/cbztool/internal/archive"
+	"codeberg.org/Nikode/cbztool/internal/comicinfo"
+	"codeberg.org/Nikode/cbztool/internal/config"
+	"codeberg.org/Nikode/cbztool/internal/filename"
+	"codeberg.org/Nikode/cbztool/internal/provider"
 )
 
-// Tag implements `cb tag [flags] <path>`: populate ComicInfo.xml, either from an
-// online provider (default) or by prompting the user (--manual). A single .cbz
-// is one comic; a directory is processed as a batch (online auto-match per file)
-// or, with --manual, as one series (series-level fields prompted once).
+// Tag implements `cbz tag [flags] <path>`: populate ComicInfo.xml from an online
+// provider. A single .cbz is one comic; a directory is processed as a batch
+// (online auto-match per file). `-m`/`--manual` anywhere before the path
+// switches to the manual mode (see TagManual), which has its own flag set.
 func Tag(args []string) error {
+	if rest, ok := stripManualFlag(args); ok {
+		return TagManual(rest)
+	}
+
 	fs := flag.NewFlagSet("tag", flag.ExitOnError)
-	id := fs.String("id", "", "tag a specific issue by provider issue ID (online)")
-	seriesID := fs.String("series-id", "", "tag a file or directory against a known provider series ID; match each file by its issue number (online)")
-	dryRun := fs.Bool("dry-run", false, "print the resolved ComicInfo without writing (online)")
+	id := fs.String("id", "", "tag one file by issue id: a Metron number, or a ComicVine 4000-… id")
+	seriesID := fs.String("series-id", "", "tag a file or directory against a known series: a Metron number, or a ComicVine 4050-… volume id; files are matched by issue number")
+	dryRun := fs.Bool("dry-run", false, "print the resolved ComicInfo without writing")
 	force := fs.Bool("force", false, "overwrite an existing ComicInfo.xml")
-	pick := fs.Bool("pick", false, "always show the series picker (online; skip auto-match)")
-	manual := fs.Bool("manual", false, "prompt for fields instead of fetching online")
-	fs.BoolVar(manual, "m", false, "shorthand for --manual")
-	refresh := fs.Bool("refresh", false, "ignore cached API responses and refetch (online)")
-	providerName := fs.String("provider", "", "metadata provider: metron (default) or comicvine; aliases mt, cv")
+	pick := fs.Bool("pick", false, "always show the series picker (skip auto-match)")
+	refresh := fs.Bool("refresh", false, "ignore cached API responses and refetch")
+	providerName := fs.String("provider", "", "use only this provider: metron or comicvine (aliases mt, cv); default is every configured provider, combined")
 	fs.StringVar(providerName, "p", "", "shorthand for --provider")
-	fallbackName := fs.String("fallback", "", "if the primary provider has no match, retry the search on this provider (e.g. comicvine)")
-	verbose := fs.Bool("verbose", false, "show parsed fields and every series candidate the provider returned")
+	verbose := fs.Bool("verbose", false, "show parsed fields, series candidates, and how each source was matched")
 	fs.BoolVar(verbose, "v", false, "shorthand for --verbose")
+	fs.Usage = func() {
+		fmt.Fprintln(fs.Output(), "usage: cbz tag [-p <provider>] [--id <issueID>] [--series-id <seriesID>] [--dry-run] [--force] [--pick] [--refresh] [-v] <path>")
+		fmt.Fprintln(fs.Output(), "       cbz tag -m ...   manual mode (prompts, JSON file, or -s Field=Value); see cbz tag -m -h")
+		fs.PrintDefaults()
+	}
 	_ = fs.Parse(args)
 	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: cb tag [--manual] [-p <provider>] [--fallback <provider>] [--id <issueID>] [--series-id <seriesID>] [--dry-run] [--force] [--pick] [--refresh] [-v] <path>")
+		fs.Usage()
+		return fmt.Errorf("tag: expected exactly one <path>")
 	}
 	target := fs.Arg(0)
-
-	if *manual {
-		switch {
-		case *id != "":
-			return fmt.Errorf("tag: --manual and --id are mutually exclusive")
-		case *seriesID != "":
-			return fmt.Errorf("tag: --series-id applies only to online tagging")
-		case *pick:
-			return fmt.Errorf("tag: --pick applies only to online tagging")
-		case *dryRun:
-			return fmt.Errorf("tag: --dry-run applies only to online tagging")
-		case *refresh:
-			return fmt.Errorf("tag: --refresh applies only to online tagging")
-		case *fallbackName != "":
-			return fmt.Errorf("tag: --fallback applies only to online tagging")
-		}
-	}
 
 	if *seriesID != "" {
 		switch {
@@ -70,15 +61,18 @@ func Tag(args []string) error {
 		}
 	}
 
-	// Fallback is a name-search recovery, so it has no meaning for ID-based
-	// lookups: a provider's issue/series ID is specific to that provider.
-	if *fallbackName != "" {
-		switch {
-		case *id != "":
-			return fmt.Errorf("tag: --fallback cannot be combined with --id (an issue ID is specific to one provider)")
-		case *seriesID != "":
-			return fmt.Errorf("tag: --fallback cannot be combined with --series-id (a series ID is specific to one provider)")
-		}
+	// An id names its provider (ComicVine ids carry a 4000-/4050- prefix), so
+	// work that out before opening providers.
+	var idProv, idValue string
+	var err error
+	switch {
+	case *id != "":
+		idProv, idValue, err = idProvider(*id, cvIssuePrefix, *providerName, "--id")
+	case *seriesID != "":
+		idProv, idValue, err = idProvider(*seriesID, cvVolumePrefix, *providerName, "--series-id")
+	}
+	if err != nil {
+		return err
 	}
 
 	info, err := os.Stat(target)
@@ -86,73 +80,56 @@ func Tag(args []string) error {
 		return err
 	}
 
-	if *manual {
-		if info.IsDir() {
-			return tagManualSeries(target, *force)
-		}
-		return tagManualSingle(target, *force)
+	src, err := openProviders(*providerName, *refresh, *verbose)
+	if err != nil {
+		return err
 	}
-
-	chain, err := openProviderChain(*providerName, *fallbackName, *refresh)
+	if idProv == "" {
+		if info.IsDir() {
+			return tagDirOnline(src, target, *dryRun, *force, *verbose)
+		}
+		return tagFileOnline(src, nil, target, "", *dryRun, *force, *pick, *verbose)
+	}
+	prov, err := providerNamed(src.chain, idProv)
 	if err != nil {
 		return err
 	}
 	if *seriesID != "" {
-		return tagBySeriesID(chain[0], target, info.IsDir(), *seriesID, *dryRun, *force, *verbose)
+		return tagBySeriesID(src, prov, target, info.IsDir(), idValue, *dryRun, *force, *verbose)
 	}
 	if info.IsDir() {
-		return tagDirOnline(chain, target, *dryRun, *force, *id, *verbose)
+		return fmt.Errorf("tag: --id cannot be combined with a directory")
 	}
-	return tagFileOnline(chain, target, *id, *dryRun, *force, *pick, *verbose)
+	return tagFileOnline(src, prov, target, idValue, *dryRun, *force, *pick, *verbose)
 }
 
-// openProvider loads config and builds the configured online provider (used by
-// pack's chained tag). When refresh is set and the provider keeps a persistent
-// cache, cached reads are bypassed for this run.
-func openProvider(refresh bool) (provider.Provider, error) {
-	cfg, err := provider.LoadConfig()
-	if err != nil {
-		return nil, err
-	}
-	return buildProvider(cfg, cfg.Provider, refresh)
-}
-
-// openProviderChain builds the primary provider plus, when --fallback names one,
-// a secondary tried only on a clean not-found. primaryName/fallbackName may be
-// empty (primary defaults to the configured provider) and accept aliases. The
-// returned slice always has the primary at index 0.
-func openProviderChain(primaryName, fallbackName string, refresh bool) ([]provider.Provider, error) {
-	cfg, err := provider.LoadConfig()
-	if err != nil {
-		return nil, err
-	}
-	if primaryName == "" {
-		primaryName = cfg.Provider
-	}
-	primary, err := buildProvider(cfg, primaryName, refresh)
-	if err != nil {
-		return nil, err
-	}
-	chain := []provider.Provider{primary}
-	if fallbackName != "" {
-		if provider.CanonicalProvider(fallbackName) == provider.CanonicalProvider(primaryName) {
-			return nil, fmt.Errorf("tag: --fallback %q is the same as the primary provider", fallbackName)
+// stripManualFlag reports whether args selects the manual mode (-m/--manual
+// before any "--" terminator) and returns args with that flag removed, so the
+// manual flag set never sees it.
+func stripManualFlag(args []string) ([]string, bool) {
+	for i, a := range args {
+		switch a {
+		case "--":
+			return args, false
+		case "-m", "--m", "-manual", "--manual":
+			rest := append(append([]string{}, args[:i]...), args[i+1:]...)
+			return rest, true
 		}
-		fb, err := buildProvider(cfg, fallbackName, refresh)
-		if err != nil {
-			return nil, fmt.Errorf("tag: --fallback: %w", err)
-		}
-		chain = append(chain, fb)
 	}
-	return chain, nil
+	return args, false
 }
 
-// buildProvider constructs the named provider from cfg (a copy, so the override
-// doesn't leak), enabling cache bypass when refresh is set.
-func buildProvider(cfg *provider.Config, name string, refresh bool) (provider.Provider, error) {
-	c := *cfg
-	c.Provider = name
-	prov, err := provider.New(&c)
+// buildProvider constructs the named provider (aliases accepted) from its
+// credentials in cfg, enabling cache bypass when refresh is set.
+func buildProvider(cfg *config.Config, name string, refresh bool) (provider.Provider, error) {
+	name = provider.CanonicalProvider(name)
+	cr := cfg.Credentials[name]
+	prov, err := provider.New(name, provider.ProviderConfig{
+		APIKey:   cr.APIKey,
+		Username: cr.Username,
+		Password: cr.Password,
+		CacheTTL: cfg.Providers.CacheTTL.Duration,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -167,9 +144,10 @@ func buildProvider(cfg *provider.Config, name string, refresh bool) (provider.Pr
 // --- online tagging (formerly `cb fetch`) ---
 
 // tagFileOnline resolves and writes (or dry-run prints) metadata for one
-// archive, trying the fallback provider (if any) when the primary has no match.
-func tagFileOnline(chain []provider.Provider, path, id string, dryRun, force, pick, verbose bool) error {
-	primary := chain[0]
+// archive: directly by id on idProv when given, otherwise from the filename
+// (trying each provider in turn while earlier ones have no match). The result
+// is then completed from the other providers (combine).
+func tagFileOnline(src sources, idProv provider.Provider, path, id string, dryRun, force, pick, verbose bool) error {
 	a, err := archive.Open(path)
 	if err != nil {
 		return err
@@ -177,167 +155,218 @@ func tagFileOnline(chain []provider.Provider, path, id string, dryRun, force, pi
 	_, _, found, _ := a.ReadComicInfo()
 	pageCount := a.PageCount()
 	a.Close()
+	fmt.Println(Sanitize(filepath.Base(path)))
 	if found && !force && !dryRun {
-		return fmt.Errorf("%s already has a ComicInfo.xml (use --force to overwrite)", path)
+		fmt.Println("  skipped: " + skipAlreadyTagged)
+		return nil
 	}
 
-	// Generous budget: a single resolution is up to 3 calls, and a throttled
-	// call may back off and retry, so allow room beyond the happy path.
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	// Generous budget: a resolution is up to 3 calls plus the other sources'
+	// lookups, and a throttled call may back off and retry.
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 
-	var ci *comicinfo.ComicInfo
-	via := primary // the provider that actually resolved the issue
-	if id != "" {
-		ci, err = primary.IssueByID(ctx, id)
+	var iss *provider.Issue
+	via := idProv // the provider that resolved the issue
+	if idProv != nil {
+		iss, err = idProv.IssueByID(ctx, id)
 	} else {
-		ci, via, err = resolveFromFilename(ctx, chain, path, pick, verbose)
+		iss, via, err = resolveFromFilename(ctx, src.chain, path, pick, verbose)
 	}
 	if err != nil {
 		return err
 	}
+	ci, names, notes := combine(ctx, src, via, iss, verbose)
 	ci.PageCount = pageCount // archive is authoritative for PageCount
 
+	o := fileOutcome{written: true, notes: notes, detail: strings.Join(names, " + ")}
 	if dryRun {
-		return printDryRun(path, via.Name(), ci)
+		if o.dump, err = ci.Marshal(); err != nil {
+			return err
+		}
+	} else if err := saveComicInfo(path, ci); err != nil {
+		return err
 	}
-	return writeComicInfo(path, ci)
+	fmt.Printf("  %s as %s\n", o.summary(dryRun), Sanitize(issueLabel(ci)))
+	printFileNotes("  ", o.notes)
+	os.Stdout.Write(o.dump)
+	return nil
+}
+
+// issueLabel names a resolved issue for the single-file report:
+// `Angor #1 "Runaway"`.
+func issueLabel(ci *comicinfo.ComicInfo) string {
+	s := ci.Series
+	if ci.Number != "" {
+		s += " #" + ci.Number
+	}
+	if ci.Title != "" {
+		s += fmt.Sprintf(" %q", ci.Title)
+	}
+	return s
+}
+
+// seriesRef renders a provider series id the way --series-id accepts it
+// ("comicvine 4050-98801", "metron 5"), so it can be copied into a re-run.
+func seriesRef(providerName, id string) string {
+	if providerName == "comicvine" && !strings.HasPrefix(id, cvVolumePrefix+"-") {
+		id = cvVolumePrefix + "-" + id
+	}
+	return providerName + " " + id
 }
 
 // tagDirOnline tags every .cbz in a directory by name search. Files are grouped
-// by their parsed series name, each series is resolved once (and the whole group
-// is skipped with a single message if it can't be — no per-issue churn on a
-// miss), the local issue count is verified against the provider's, and each file
-// is then matched by its number. A mixed directory (several series) is handled
-// by resolving each group independently, so one bad group never blocks another.
-func tagDirOnline(chain []provider.Provider, dir string, dryRun, force bool, id string, verbose bool) error {
-	if id != "" {
-		return fmt.Errorf("tag: --id cannot be combined with a directory")
-	}
+// by their parsed series name, each series is resolved once, the local issue
+// count is verified against the provider's, and each file is then matched by
+// its number. Each series gets a header line saying what it matched, with its
+// files listed under it. A mixed directory (several series) is handled by
+// resolving each group independently, so one bad group never blocks another.
+func tagDirOnline(src sources, dir string, dryRun, force, verbose bool) error {
 	files, err := cbzFiles(dir)
 	if err != nil {
 		return err
 	}
 	groups, ungroupable := groupBySeries(files)
-	if verbose {
-		printGroupingTree(groups, ungroupable)
-	}
 
-	var total groupOutcome
-	for _, f := range ungroupable {
-		fmt.Printf("%s: no series parsed from filename; skipped\n", Sanitize(f))
-		total.skipped++
+	b := newBatch(len(files), dryRun)
+	var numbers []string
+	for _, g := range groups {
+		for _, p := range g.parsed {
+			numbers = append(numbers, p.Number)
+		}
+	}
+	b.numWidth = numColumn(numbers)
+
+	if len(ungroupable) > 0 {
+		b.header("no series name in filename", true, false)
+		for _, f := range ungroupable {
+			b.record(f, fileOutcome{skip: "no series name in filename"})
+		}
 	}
 	for _, g := range groups {
-		o := tagSeriesGroup(chain, g, dryRun, force, verbose)
-		total.resolved += o.resolved
-		total.skipped += o.skipped
-		total.failed += o.failed
-		total.viaFallback += o.viaFallback
+		tagSeriesGroup(src, g, b, dryRun, force, verbose)
 	}
-	if total.viaFallback > 0 {
-		fmt.Printf("done: %d resolved (%d via %s), %d skipped, %d failed\n",
-			total.resolved, total.viaFallback, chain[len(chain)-1].Name(), total.skipped, total.failed)
-	} else {
-		fmt.Printf("done: %d resolved, %d skipped, %d failed\n", total.resolved, total.skipped, total.failed)
-	}
-	return nil
+	return b.done()
 }
 
-// groupOutcome tallies one series group's per-file results. viaFallback counts
-// how many of resolved were tagged via the fallback provider (for the run
-// summary), so a mixed-source run is reported transparently.
-type groupOutcome struct{ resolved, skipped, failed, viaFallback int }
-
 // tagSeriesGroup resolves one series (by name, once, across the provider chain)
-// and tags the group's files. A series that can't be confidently matched on any
-// provider, or whose local issue count exceeds the matched provider's record, is
-// skipped wholesale with one message rather than probed file-by-file.
-func tagSeriesGroup(chain []provider.Provider, g *seriesGroup, dryRun, force, verbose bool) groupOutcome {
-	matched, series, ok, err := resolveGroupSeries(chain, g, verbose)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "cb: series %q: %s\n", g.display, Sanitize(err.Error()))
-		return groupOutcome{failed: len(g.files)}
-	}
-	if !ok {
-		fmt.Printf("series %q: no confident match; skipping %d file(s) (tag individually or use --series-id)\n", g.display, len(g.files))
-		return groupOutcome{skipped: len(g.files)}
-	}
-	fellBack := matched.Name() != chain[0].Name()
-	if fellBack {
-		fmt.Printf("series %q: matched via %s (fallback)\n", g.display, matched.Name())
-	}
-	label := fmt.Sprintf("series %q", seriesLabel(series))
-
-	// Verify how much of the run we hold before doing any per-issue work: more
-	// local issues than the series has on record is a strong "wrong series /
-	// oddly-split files" signal, so refuse the whole group rather than mis-tag.
-	local := distinctNumbers(g.parsed)
-	switch verdict := classifyIssueCount(local, series.IssueCount); verdict {
-	case countOver:
-		fmt.Fprintf(os.Stderr, "cb: %s; skipping %d file(s)\n", issueCountNote(label, verdict, local, series.IssueCount), len(g.files))
-		return groupOutcome{skipped: len(g.files)}
-	case countIncomplete:
-		fmt.Printf("%s\n", issueCountNote(label, verdict, local, series.IssueCount))
-	case countComplete:
+// and tags the group's files, recording each outcome in b. A series that can't
+// be confidently matched on any provider, or whose local issue count exceeds
+// the matched provider's record, has every file skipped rather than probed.
+func tagSeriesGroup(src sources, g *seriesGroup, b *batch, dryRun, force, verbose bool) {
+	m, err := resolveGroupSeries(src.chain, g)
+	diag := func() {
 		if verbose {
-			fmt.Printf("%s\n", issueCountNote(label, verdict, local, series.IssueCount))
+			for _, l := range m.diag {
+				fmt.Println("  " + l)
+			}
 		}
+	}
+	files := counted(len(g.files), "file", "files")
+	switch {
+	case err != nil:
+		b.header(fmt.Sprintf("%q · %s — series search failed: %s", g.display, files, err), false, true)
+		for i, f := range g.files {
+			b.record(f, fileOutcome{number: g.parsed[i].Number, err: errors.New("series search failed")})
+		}
+		return
+	case m.prov == nil:
+		b.header(fmt.Sprintf("%q · %s — %s; tag files one by one, or use --series-id", g.display, files, m.miss), true, false)
+		diag()
+		for i, f := range g.files {
+			b.record(f, fileOutcome{number: g.parsed[i].Number, skip: "series not matched"})
+		}
+		return
 	}
 
-	resolve := func(ctx context.Context, number string) (*comicinfo.ComicInfo, error) {
-		return matched.IssueByNumber(ctx, series.ID, number)
+	head := fmt.Sprintf("%s · %s · %s", seriesLabel(m.series), seriesRef(m.prov.Name(), m.series.ID), files)
+	if m.series.IssueCount > 0 {
+		head += fmt.Sprintf(", %s on record", counted(m.series.IssueCount, "issue", "issues"))
 	}
-	var o groupOutcome
-	for _, f := range g.files {
-		written, ferr := tagFileWithResolver(matched, f, resolve, dryRun, force)
-		switch {
-		case ferr != nil:
-			fmt.Fprintf(os.Stderr, "cb: %s: %s\n", Sanitize(f), Sanitize(ferr.Error()))
-			o.failed++
-		case written:
-			o.resolved++
-			if fellBack {
-				o.viaFallback++
-			}
-		default:
-			o.skipped++
+	if m.prov != src.chain[0] {
+		head += fmt.Sprintf(" (no %s match)", src.chain[0].Name())
+	}
+
+	// More distinct local issues than the series has on record is a strong
+	// "wrong series / oddly-split files" signal: refuse the group, don't mis-tag.
+	if classifyIssueCount(distinctNumbers(g.parsed), m.series.IssueCount) == countOver {
+		b.header(head+" — more issues here than on record; likely the wrong series, use --series-id", true, false)
+		diag()
+		for i, f := range g.files {
+			b.record(f, fileOutcome{number: g.parsed[i].Number, skip: "more issues here than in the matched series"})
 		}
+		return
 	}
-	return o
+	b.header(head, false, false)
+	diag()
+
+	resolve := func(ctx context.Context, number string) (*provider.Issue, error) {
+		return m.prov.IssueByNumber(ctx, m.series.ID, number)
+	}
+	for _, f := range g.files {
+		b.record(f, tagFileWithResolver(src, m.prov, f, resolve, dryRun, force, verbose))
+	}
+}
+
+// groupMatch is the outcome of resolving a series group: the provider and
+// series it matched (prov nil when none did), why it didn't match, and the
+// candidate lists for -v.
+type groupMatch struct {
+	prov   provider.Provider
+	series provider.SeriesResult
+	miss   string
+	diag   []string
 }
 
 // resolveGroupSeries searches each provider in the chain for a confident series
-// match, returning the first that matches and the provider that produced it. It
-// only advances to the next provider when the current one has no exact-name
-// candidate at all (a genuine "not here"); an ambiguous-but-present match stops
-// the search rather than letting a different source guess. A transport/auth
-// error is returned immediately — fallback never masks a real failure.
-func resolveGroupSeries(chain []provider.Provider, g *seriesGroup, verbose bool) (provider.Provider, provider.SeriesResult, bool, error) {
+// match, returning the first that matches. It only advances to the next
+// provider when the current one has no exact-name candidate at all (a genuine
+// "not here"); an ambiguous-but-present match stops the search rather than
+// letting a different source guess. A transport/auth error is returned
+// immediately — trying another source never masks a real failure.
+func resolveGroupSeries(chain []provider.Provider, g *seriesGroup) (groupMatch, error) {
+	var m groupMatch
+	var tried []string
 	for _, prov := range chain {
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 		results, err := prov.SearchSeries(ctx, g.display)
 		cancel()
 		if err != nil {
-			return nil, provider.SeriesResult{}, false, fmt.Errorf("%s: %w", prov.Name(), err)
+			return m, fmt.Errorf("%s: %w", prov.Name(), err)
 		}
 		results = preferEdition(results, g.display)
 		series, ok := bestSeriesMatch(results, g.display, g.repYear())
-		if verbose {
-			var picked *provider.SeriesResult
-			if ok {
-				picked = &series
-			}
-			printGroupDiagnostics(g, prov.Name(), results, picked)
-		}
+		var picked *provider.SeriesResult
 		if ok {
-			return prov, series, true, nil
+			picked = &series
 		}
-		if len(exactNameMatches(results, g.display)) > 0 {
-			break // present but ambiguous: don't let a fallback override it
+		m.diag = append(m.diag, candidateLines(prov.Name(), g.display, results, picked)...)
+		if ok {
+			m.prov, m.series = prov, series
+			return m, nil
+		}
+		tried = append(tried, prov.Name())
+		if exact := len(exactNameMatches(results, g.display)); exact > 0 {
+			m.miss = fmt.Sprintf("%d series with that name on %s, none clearly the one", exact, prov.Name())
+			return m, nil // present but ambiguous: don't let another source override it
 		}
 	}
-	return nil, provider.SeriesResult{}, false, nil
+	m.miss = "not found on " + strings.Join(tried, " or ")
+	return m, nil
+}
+
+// candidateLines lists, for -v, the series candidates a search returned,
+// marking the chosen one with "=>".
+func candidateLines(providerName, query string, results []provider.SeriesResult, picked *provider.SeriesResult) []string {
+	lines := []string{fmt.Sprintf("%s: %s for %q", providerName, counted(len(results), "candidate", "candidates"), query)}
+	for _, s := range results {
+		mark := "  "
+		if picked != nil && s.ID == picked.ID {
+			mark = "=>"
+		}
+		lines = append(lines, fmt.Sprintf("  %s %s · %s · %s", mark, seriesLabel(s), counted(s.IssueCount, "issue", "issues"), seriesRef(providerName, s.ID)))
+	}
+	return lines
 }
 
 // seriesGroup collects the files in a directory that parsed to the same series
@@ -365,9 +394,20 @@ func (g *seriesGroup) repYear() int {
 // "Aliens Vampirella" and "Aliens / Vampirella" co-group. Group order is stable
 // (first-seen). Files with no parsable series come back as ungroupable.
 func groupBySeries(files []string) (groups []*seriesGroup, ungroupable []string) {
+	parsed := make([]filename.ParsedName, len(files))
+	for i, f := range files {
+		parsed[i] = filename.Parse(f)
+	}
+	return groupParsed(files, parsed)
+}
+
+// groupParsed is groupBySeries over already-identified files (parsed is
+// index-aligned with files), for callers whose series/number come from
+// somewhere other than the filename — e.g. an archive's ComicInfo.
+func groupParsed(files []string, parsed []filename.ParsedName) (groups []*seriesGroup, ungroupable []string) {
 	byKey := make(map[string]*seriesGroup)
-	for _, f := range files {
-		p := filename.Parse(f)
+	for i, f := range files {
+		p := parsed[i]
 		if p.Series == "" {
 			ungroupable = append(ungroupable, f)
 			continue
@@ -385,67 +425,6 @@ func groupBySeries(files []string) (groups []*seriesGroup, ungroupable []string)
 	return groups, ungroupable
 }
 
-// printGroupingTree shows, under -v, how the directory's files bucketed into
-// series groups before any network call — each group with its issues, plus any
-// ungroupable files. This is the "how did cb group my files?" view; the actual
-// provider match for each group is printed later by printGroupDiagnostics.
-func printGroupingTree(groups []*seriesGroup, ungroupable []string) {
-	fmt.Printf("[verbose] grouped local files into %d series:\n", len(groups))
-	for _, g := range groups {
-		year := "year ?"
-		if y := g.repYear(); y > 0 {
-			year = fmt.Sprintf("~%d", y)
-		}
-		fmt.Printf("[verbose]   %s (%s) — %d issue(s)\n", Sanitize(g.display), year, distinctNumbers(g.parsed))
-		for i, p := range g.parsed {
-			num := p.Number
-			if num == "" {
-				num = "?"
-			}
-			fmt.Printf("[verbose]       #%-5s %s\n", num, Sanitize(filepath.Base(g.files[i])))
-		}
-	}
-	if len(ungroupable) > 0 {
-		fmt.Printf("[verbose]   (no series parsed — ungroupable)\n")
-		for _, f := range ungroupable {
-			fmt.Printf("[verbose]       %s\n", Sanitize(filepath.Base(f)))
-		}
-	}
-}
-
-// printSeriesIDTree shows, under -v, the local files being tagged against an
-// explicit --series-id, each with its parsed number and whether that number is
-// present in the series. It's the single-series analogue of the grouping tree,
-// so both batch paths give the same "here's what I'm about to do" view.
-func printSeriesIDTree(seriesID string, available int, files []string, parsed []filename.ParsedName, byNum map[string]string) {
-	fmt.Printf("[verbose] series %s — %d issue(s) available; %d local file(s):\n", seriesID, available, len(files))
-	for i, f := range files {
-		num, status := parsed[i].Number, "in series"
-		switch num {
-		case "":
-			num, status = "?", "no number parsed"
-		default:
-			if _, ok := byNum[canonNumber(num)]; !ok {
-				status = "not in series"
-			}
-		}
-		fmt.Printf("[verbose]       #%-5s %s  (%s)\n", num, Sanitize(filepath.Base(f)), status)
-	}
-}
-
-// printGroupDiagnostics dumps, under -v, the series candidates a group's name
-// search returned on a given provider, marking the resolved one with "=>".
-func printGroupDiagnostics(g *seriesGroup, providerName string, results []provider.SeriesResult, picked *provider.SeriesResult) {
-	fmt.Printf("[verbose] resolving %q via %s:\n", g.display, providerName)
-	for _, s := range results {
-		mark := "  "
-		if picked != nil && s.ID == picked.ID {
-			mark = "=>"
-		}
-		fmt.Printf("[verbose]   %s %s [%d issues] id=%s\n", mark, seriesLabel(s), s.IssueCount, s.ID)
-	}
-}
-
 // tagBySeriesID tags one file or a whole directory against a known provider
 // series ID. It enumerates the series' issues once (SeriesIssueLister), builds a
 // number -> issueID map, then matches each file by its parsed issue number and
@@ -453,7 +432,7 @@ func printGroupDiagnostics(g *seriesGroup, providerName string, results []provid
 // no fuzzy matching — and costs one list call plus one detail per matched file.
 // For a directory it applies the same completeness verification as name-search
 // batch tagging, refusing to tag when more local issues exist than the series.
-func tagBySeriesID(prov provider.Provider, target string, isDir bool, seriesID string, dryRun, force, verbose bool) error {
+func tagBySeriesID(src sources, prov provider.Provider, target string, isDir bool, seriesID string, dryRun, force, verbose bool) error {
 	lister, ok := prov.(provider.SeriesIssueLister)
 	if !ok {
 		return fmt.Errorf("tag: the %s provider does not support --series-id", prov.Name())
@@ -471,7 +450,7 @@ func tagBySeriesID(prov provider.Provider, target string, isDir bool, seriesID s
 		byNum[canonNumber(s.Number)] = s.ID
 	}
 	// A number not in the listed series is a clean per-file skip (ErrNotFound).
-	resolve := func(ctx context.Context, number string) (*comicinfo.ComicInfo, error) {
+	resolve := func(ctx context.Context, number string) (*provider.Issue, error) {
 		id, ok := byNum[canonNumber(number)]
 		if !ok {
 			return nil, fmt.Errorf("issue %q not in series %s: %w", number, seriesID, provider.ErrNotFound)
@@ -479,60 +458,42 @@ func tagBySeriesID(prov provider.Provider, target string, isDir bool, seriesID s
 		return prov.IssueByID(ctx, id)
 	}
 
-	// Collect the target file(s) and parse them up front so -v can show the same
-	// file -> issue tree the name-search path does.
-	var files []string
-	if isDir {
-		files, err = cbzFiles(target)
-		if err != nil {
-			return err
+	if !isDir {
+		fmt.Println(Sanitize(filepath.Base(target)))
+		o := tagFileWithResolver(src, prov, target, resolve, dryRun, force, verbose)
+		if o.err != nil {
+			return o.err
 		}
-	} else {
-		files = []string{target}
-	}
-	parsed := make([]filename.ParsedName, len(files))
-	for i, f := range files {
-		parsed[i] = filename.Parse(f)
-	}
-	if verbose {
-		printSeriesIDTree(seriesID, len(stubs), files, parsed, byNum)
+		fmt.Printf("  %s\n", Sanitize(o.summary(dryRun)))
+		printFileNotes("  ", o.notes)
+		os.Stdout.Write(o.dump)
+		return nil
 	}
 
-	if !isDir {
-		_, err := tagFileWithResolver(prov, target, resolve, dryRun, force)
+	files, err := cbzFiles(target)
+	if err != nil {
 		return err
 	}
-
-	// Same completeness check as the name-search path (consistency): the issue
-	// list we just fetched is the authoritative count.
-	local := distinctNumbers(parsed)
-	label := fmt.Sprintf("series %s", seriesID)
-	switch verdict := classifyIssueCount(local, len(stubs)); verdict {
-	case countOver:
-		return fmt.Errorf("%s; refusing to tag (verify the series id, the files, or split the directory)", issueCountNote(label, verdict, local, len(stubs)))
-	case countIncomplete:
-		fmt.Printf("%s\n", issueCountNote(label, verdict, local, len(stubs)))
-	case countComplete:
-		if verbose {
-			fmt.Printf("%s\n", issueCountNote(label, verdict, local, len(stubs)))
-		}
+	parsed := make([]filename.ParsedName, len(files))
+	numbers := make([]string, len(files))
+	for i, f := range files {
+		parsed[i] = filename.Parse(f)
+		numbers[i] = parsed[i].Number
 	}
 
-	var resolved, skipped, failed int
+	head := fmt.Sprintf("%s · %s, %s on record", seriesRef(prov.Name(), seriesID),
+		counted(len(files), "file", "files"), counted(len(stubs), "issue", "issues"))
+	if classifyIssueCount(distinctNumbers(parsed), len(stubs)) == countOver {
+		return fmt.Errorf("%s — more issues here than on record; refusing to tag (check the series id, or split the directory)", head)
+	}
+
+	b := newBatch(len(files), dryRun)
+	b.numWidth = numColumn(numbers)
+	b.header(head, false, false)
 	for _, f := range files {
-		written, ferr := tagFileWithResolver(prov, f, resolve, dryRun, force)
-		switch {
-		case ferr != nil:
-			fmt.Fprintf(os.Stderr, "cb: %s: %s\n", Sanitize(f), Sanitize(ferr.Error()))
-			failed++
-		case written:
-			resolved++
-		default:
-			skipped++
-		}
+		b.record(f, tagFileWithResolver(src, prov, f, resolve, dryRun, force, verbose))
 	}
-	fmt.Printf("done: %d resolved, %d skipped, %d failed\n", resolved, skipped, failed)
-	return nil
+	return b.done()
 }
 
 // issueResolver turns a parsed issue number into resolved metadata for an
@@ -540,55 +501,52 @@ func tagBySeriesID(prov provider.Provider, target string, isDir bool, seriesID s
 // grouping looks the number up in the series (IssueByNumber); --series-id looks
 // it up in the pre-listed issue map (IssueByID). A number the series doesn't
 // contain must be reported as provider.ErrNotFound so callers treat it as a skip.
-type issueResolver func(ctx context.Context, number string) (*comicinfo.ComicInfo, error)
+type issueResolver func(ctx context.Context, number string) (*provider.Issue, error)
 
 // tagFileWithResolver applies a resolved-series issueResolver to one archive: it
 // honors an existing ComicInfo (unless force/dry-run), requires a parsed issue
-// number, fetches metadata, takes PageCount from the archive, and writes (or
-// dry-run prints). A number the series lacks (ErrNotFound) is a skip, not an
-// error, so one stray file never aborts a batch. written is true only when
-// metadata was produced.
-func tagFileWithResolver(prov provider.Provider, path string, resolve issueResolver, dryRun, force bool) (written bool, err error) {
+// number, fetches metadata (completed from the other providers in chain),
+// takes PageCount from the archive, and writes (or, under dry-run, keeps the
+// XML for the report). It prints nothing; the caller reports the returned
+// outcome. A number the series lacks (ErrNotFound) is a skip, not an error, so
+// one stray file never aborts a batch.
+func tagFileWithResolver(src sources, prov provider.Provider, path string, resolve issueResolver, dryRun, force, verbose bool) fileOutcome {
+	number := filename.Parse(path).Number
 	a, err := archive.Open(path)
 	if err != nil {
-		return false, err
+		return fileOutcome{number: number, err: err}
 	}
 	_, _, found, _ := a.ReadComicInfo()
 	pageCount := a.PageCount()
 	a.Close()
 	if found && !force && !dryRun {
-		fmt.Printf("%s: already has ComicInfo.xml (skipped; use --force)\n", Sanitize(path))
-		return false, nil
+		return fileOutcome{number: number, skip: skipAlreadyTagged}
 	}
-
-	number := filename.Parse(path).Number
 	if number == "" {
-		fmt.Printf("%s: no issue number parsed from filename; skipped\n", Sanitize(path))
-		return false, nil
+		return fileOutcome{skip: "no issue number in filename"}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	ci, err := resolve(ctx, number)
-	cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	iss, err := resolve(ctx, number)
 	if err != nil {
 		if errors.Is(err, provider.ErrNotFound) {
-			fmt.Printf("%s: issue #%s not in the series; skipped\n", Sanitize(path), number)
-			return false, nil
+			return fileOutcome{number: number, skip: fmt.Sprintf("#%s isn't in this series", number)}
 		}
-		return false, err
+		return fileOutcome{number: number, err: err}
 	}
+	ci, names, notes := combine(ctx, src, prov, iss, verbose)
 	ci.PageCount = pageCount // archive is authoritative for PageCount
+	o := fileOutcome{number: number, written: true, detail: strings.Join(names, " + "), notes: notes}
 
 	if dryRun {
-		if perr := printDryRun(path, prov.Name(), ci); perr != nil {
-			return false, perr
+		if o.dump, err = ci.Marshal(); err != nil {
+			return fileOutcome{number: number, err: err}
 		}
-		return true, nil
+	} else if err := saveComicInfo(path, ci); err != nil {
+		return fileOutcome{number: number, err: err}
 	}
-	if werr := writeComicInfo(path, ci); werr != nil {
-		return false, werr
-	}
-	return true, nil
+	return o
 }
 
 // seriesCountVerdict classifies how the count of distinct issues held locally
@@ -615,21 +573,6 @@ func classifyIssueCount(localDistinct, reported int) seriesCountVerdict {
 		return countIncomplete
 	default:
 		return countComplete
-	}
-}
-
-// issueCountNote renders the one-line note for a count verdict (empty for an
-// unknown count). label is e.g. `series "Saga (2014)"`.
-func issueCountNote(label string, v seriesCountVerdict, localDistinct, reported int) string {
-	switch v {
-	case countOver:
-		return fmt.Sprintf("%s: %d local issue(s) exceed the %d on record — likely the wrong series or oddly-split files", label, localDistinct, reported)
-	case countIncomplete:
-		return fmt.Sprintf("%s: have %d of %d issue(s); series is incomplete locally", label, localDistinct, reported)
-	case countComplete:
-		return fmt.Sprintf("%s: %d of %d issue(s); series complete", label, localDistinct, reported)
-	default:
-		return ""
 	}
 }
 
@@ -680,24 +623,26 @@ func printDryRun(path, providerName string, ci *comicinfo.ComicInfo) error {
 // as a tiebreaker) uniquely identify a result, it is auto-selected with no
 // prompt; if the issue number was also parsed, the whole tag is hands-off.
 // Otherwise the user picks from the candidates. force (--pick) always prompts.
-func resolveFromFilename(ctx context.Context, chain []provider.Provider, path string, force, verbose bool) (*comicinfo.ComicInfo, provider.Provider, error) {
+// Its messages are indented under the file name tagFileOnline prints.
+func resolveFromFilename(ctx context.Context, chain []provider.Provider, path string, force, verbose bool) (*provider.Issue, provider.Provider, error) {
 	parsed := filename.Parse(path)
 	p := newPrompter()
 
 	name := parsed.Series
 	if name == "" {
-		q, err := p.ask("Series to search")
+		q, err := p.ask("  Series to search")
 		if err != nil {
 			return nil, nil, err
 		}
 		name = q
-	} else {
-		fmt.Printf("Parsed from filename: series=%q number=%q year=%d\n", parsed.Series, parsed.Number, parsed.Year)
+	}
+	if verbose {
+		fmt.Printf("  parsed: series %q, number %q, year %d, volume %d\n", parsed.Series, parsed.Number, parsed.Year, parsed.Volume)
 	}
 
-	// Auto-match across the provider chain (skipped under --pick). Fallback
-	// advances to the next provider only when the current one has no exact-name
-	// candidate at all, never on a transport/auth error, and never to override an
+	// Auto-match across the providers (skipped under --pick). It advances to the
+	// next provider only when the current one has no exact-name candidate at
+	// all, never on a transport/auth error, and never to override an
 	// ambiguous-but-present match.
 	if !force {
 		for _, prov := range chain {
@@ -712,19 +657,24 @@ func resolveFromFilename(ctx context.Context, chain []provider.Provider, path st
 				if ok {
 					picked = &s
 				}
-				printSearchDiagnostics(path, prov.Name(), parsed, results, picked)
+				for _, l := range candidateLines(prov.Name(), name, results, picked) {
+					fmt.Println("  " + l)
+				}
+				if !ok {
+					fmt.Printf("  no confident match (need exactly one exact-name candidate%s)\n", yearHint(parsed.Year))
+				}
 			}
 			if ok {
+				line := fmt.Sprintf("  series: %s · %s", seriesLabel(s), seriesRef(prov.Name(), s.ID))
 				if prov != chain[0] {
-					fmt.Printf("Auto-matched via %s (fallback): %s id=%s\n", prov.Name(), seriesLabel(s), s.ID)
-				} else {
-					fmt.Printf("Auto-matched series: %s id=%s\n", seriesLabel(s), s.ID)
+					line += fmt.Sprintf(" (no %s match)", chain[0].Name())
 				}
-				ci, err := resolveIssue(ctx, prov, p, s, parsed.Number)
-				return ci, prov, err
+				fmt.Println(line)
+				iss, err := resolveIssue(ctx, prov, p, s, parsed.Number)
+				return iss, prov, err
 			}
 			if len(exactNameMatches(results, name)) > 0 {
-				break // present but ambiguous: don't let a fallback guess
+				break // present but ambiguous: don't let another source guess
 			}
 		}
 	}
@@ -739,30 +689,27 @@ func resolveFromFilename(ctx context.Context, chain []provider.Provider, path st
 		return nil, nil, fmt.Errorf("no series found for %q", name)
 	}
 	results = preferEdition(results, name)
-	if verbose && force {
-		printSearchDiagnostics(path, prov.Name(), parsed, results, nil)
-	}
 	candidates := exactNameMatches(results, name)
 	if len(candidates) == 0 {
 		candidates = results
 	}
-	fmt.Println("Select a series:")
+	fmt.Printf("  pick the series for %q on %s:\n", name, prov.Name())
 	for i, s := range candidates {
-		fmt.Printf("  %2d) %s [%d issues] id=%s\n", i, seriesLabel(s), s.IssueCount, s.ID)
+		fmt.Printf("  %3d) %s · %s · %s\n", i, seriesLabel(s), counted(s.IssueCount, "issue", "issues"), seriesRef(prov.Name(), s.ID))
 	}
 	idx, err := p.askIndex("  choice [0]", len(candidates))
 	if err != nil {
 		return nil, nil, err
 	}
-	ci, err := resolveIssue(ctx, prov, p, candidates[idx], parsed.Number)
-	return ci, prov, err
+	iss, err := resolveIssue(ctx, prov, p, candidates[idx], parsed.Number)
+	return iss, prov, err
 }
 
 // resolveIssue fetches the issue by number, prompting for the number only when
 // it could not be parsed from the filename.
-func resolveIssue(ctx context.Context, prov provider.Provider, p *prompter, series provider.SeriesResult, number string) (*comicinfo.ComicInfo, error) {
+func resolveIssue(ctx context.Context, prov provider.Provider, p *prompter, series provider.SeriesResult, number string) (*provider.Issue, error) {
 	if number == "" {
-		ans, err := p.ask("Issue number")
+		ans, err := p.ask("  Issue number")
 		if err != nil {
 			return nil, err
 		}
@@ -774,29 +721,8 @@ func resolveIssue(ctx context.Context, prov provider.Provider, p *prompter, seri
 	return prov.IssueByNumber(ctx, series.ID, number)
 }
 
-// printSearchDiagnostics dumps, under -v/--verbose, what a filename parsed to
-// and every series candidate the provider returned, marking the auto-matched
-// one (if any) with "=>". It lets the user see why an auto-match did or did not
-// happen — e.g. an ambiguous name, a year mismatch, or no exact-name match.
-func printSearchDiagnostics(path, providerName string, parsed filename.ParsedName, results []provider.SeriesResult, picked *provider.SeriesResult) {
-	fmt.Printf("[verbose] %s\n", Sanitize(path))
-	fmt.Printf("[verbose]   parsed: series=%q number=%q year=%d vol=%d\n", parsed.Series, parsed.Number, parsed.Year, parsed.Volume)
-	fmt.Printf("[verbose]   %d series candidate(s) from %s for %q:\n", len(results), providerName, parsed.Series)
-	for _, s := range results {
-		mark := "  "
-		if picked != nil && s.ID == picked.ID {
-			mark = "=>"
-		}
-		fmt.Printf("[verbose]   %s %s [%d issues] id=%s\n", mark, seriesLabel(s), s.IssueCount, s.ID)
-	}
-	if picked == nil {
-		fmt.Printf("[verbose]   no confident auto-match (need exactly one exact-name candidate%s)\n",
-			yearHint(parsed.Year))
-	}
-}
-
 // yearHint notes that the parsed year is used as a tiebreaker, for the verbose
-// "no confident auto-match" explanation.
+// "no confident match" explanation.
 func yearHint(year int) string {
 	if year > 0 {
 		return fmt.Sprintf(", or one matching year %d", year)
@@ -924,130 +850,4 @@ func preferEdition(results []provider.SeriesResult, want string) []provider.Seri
 		return results
 	}
 	return out
-}
-
-// --- manual tagging (formerly `cb init`) ---
-
-// tagManualSingle prompts for every field and writes ComicInfo.xml into one
-// archive. Series and Number are pre-filled from the filename so the common
-// case is mostly Enter-presses.
-func tagManualSingle(path string, force bool) error {
-	a, err := archive.Open(path)
-	if err != nil {
-		return err
-	}
-	_, _, found, _ := a.ReadComicInfo()
-	pageCount := a.PageCount()
-	a.Close()
-	if found && !force {
-		return fmt.Errorf("%s already has a ComicInfo.xml (use --force to overwrite)", path)
-	}
-
-	parsed := filename.Parse(path)
-	p := newPrompter()
-
-	ci := &comicinfo.ComicInfo{PageCount: pageCount}
-	var perr error
-	if ci.Title, perr = p.ask("Title"); perr != nil {
-		return perr
-	}
-	if ci.Series, perr = p.askDefault("Series", parsed.Series); perr != nil {
-		return perr
-	}
-	if ci.Number, perr = p.askDefault("Number", parsed.Number); perr != nil {
-		return perr
-	}
-	for _, f := range []struct {
-		label string
-		dst   *string
-	}{
-		{"Writer", &ci.Writer},
-		{"Genre", &ci.Genre},
-		{"Tags", &ci.Tags},
-		{"Characters", &ci.Characters},
-	} {
-		v, err := p.ask(f.label)
-		if err != nil {
-			return err
-		}
-		*f.dst = cleanCSV(v)
-	}
-
-	ar, err := p.askAgeRating()
-	if err != nil {
-		return err
-	}
-	ci.AgeRating = ar
-
-	return writeComicInfo(path, ci)
-}
-
-// tagManualSeries prompts the series-level fields once and writes a
-// ComicInfo.xml into every .cbz in the directory, parsing Number from each
-// filename.
-func tagManualSeries(dir string, force bool) error {
-	files, err := cbzFiles(dir)
-	if err != nil {
-		return err
-	}
-	p := newPrompter()
-
-	series, err := p.ask("Series (applies to all)")
-	if err != nil {
-		return err
-	}
-	writer, err := p.ask("Writer (applies to all)")
-	if err != nil {
-		return err
-	}
-	genre, err := p.ask("Genre (applies to all)")
-	if err != nil {
-		return err
-	}
-	ageRating, err := p.askAgeRating()
-	if err != nil {
-		return err
-	}
-	writer, genre = cleanCSV(writer), cleanCSV(genre)
-
-	for _, f := range files {
-		if err := tagSeriesOne(f, series, writer, genre, ageRating, force); err != nil {
-			fmt.Fprintf(os.Stderr, "cb: %s: %s\n", Sanitize(f), Sanitize(err.Error()))
-		}
-	}
-	return nil
-}
-
-func tagSeriesOne(path, series, writer, genre, ageRating string, force bool) error {
-	a, err := archive.Open(path)
-	if err != nil {
-		return err
-	}
-	_, _, found, _ := a.ReadComicInfo()
-	pageCount := a.PageCount()
-	a.Close()
-	if found && !force {
-		fmt.Printf("%s: already has ComicInfo.xml (skipped; use --force)\n", Sanitize(path))
-		return nil
-	}
-
-	// Number = trailing digit run of the filename stem, leading zeros stripped.
-	stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	number := ""
-	if n, _, ok := archive.LastNumber(stem); ok {
-		number = strconv.Itoa(n)
-	} else {
-		fmt.Printf("%s: warning: no number in filename; Number left empty\n", Sanitize(path))
-	}
-
-	ci := &comicinfo.ComicInfo{
-		Series:    series,
-		Number:    number,
-		Writer:    writer,
-		Genre:     genre,
-		AgeRating: ageRating,
-		PageCount: pageCount,
-		// Title omitted (per-issue); Tags/Characters omitted (fill later).
-	}
-	return writeComicInfo(path, ci)
 }

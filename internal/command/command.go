@@ -1,4 +1,4 @@
-// Package command implements cb's CLI command handlers. Each exported function
+// Package command implements cbz's CLI command handlers. Each exported function
 // (List, Validate, Info, Strip, Tag, Pack) parses its own flags and operates on
 // a single .cbz file or, where it makes sense, a directory. The handlers
 // orchestrate the archive, comicinfo, filename, and provider packages.
@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,8 +16,8 @@ import (
 	"strings"
 	"unicode"
 
-	"cb/internal/archive"
-	"cb/internal/comicinfo"
+	"codeberg.org/Nikode/cbztool/internal/archive"
+	"codeberg.org/Nikode/cbztool/internal/comicinfo"
 )
 
 // bidiOverrides are Unicode formatting characters that can reorder how text is
@@ -93,31 +94,86 @@ func cbzFiles(p string) ([]string, error) {
 	return out, nil
 }
 
-// writeComicInfo marshals ci and writes it into the archive, replacing any
-// existing ComicInfo.xml, via the shared atomic rewrite.
-func writeComicInfo(path string, ci *comicinfo.ComicInfo) error {
-	data, err := ci.Marshal()
-	if err != nil {
-		return err
+// libraryFiles is cbzFiles with optional recursion (-r): with recursive set, a
+// directory yields every .cbz anywhere beneath it, in path order.
+// filepath.WalkDir doesn't follow symlinked directories, so a link loop can't
+// make the walk run forever.
+func libraryFiles(p string, recursive bool) ([]string, error) {
+	if !recursive {
+		return cbzFiles(p)
 	}
-	keep := func(name string) bool { return !strings.EqualFold(name, archive.ComicInfoName) }
-	if err := archive.RewriteArchive(path, keep, map[string][]byte{archive.ComicInfoName: data}); err != nil {
+	if info, err := os.Stat(p); err != nil {
+		return nil, err
+	} else if !info.IsDir() {
+		return cbzFiles(p)
+	}
+	var out []string
+	err := filepath.WalkDir(p, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && strings.EqualFold(filepath.Ext(path), ".cbz") {
+			out = append(out, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no .cbz files in or below %s", p)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// failedErr is the error a multi-file command returns when some files failed
+// (each already reported), so the process exits non-zero; nil when none did.
+func failedErr(failed, total int) error {
+	if failed == 0 {
+		return nil
+	}
+	return fmt.Errorf("%d of %d file(s) failed", failed, total)
+}
+
+// writeComicInfo saves ci into the archive (saveComicInfo) and reports it.
+func writeComicInfo(path string, ci *comicinfo.ComicInfo) error {
+	if err := saveComicInfo(path, ci); err != nil {
 		return err
 	}
 	fmt.Printf("%s: wrote ComicInfo.xml\n", Sanitize(path))
 	return nil
 }
 
-// cleanCSV trims each comma-separated token and drops empties, rejoining with
-// ", " so the comma-delimited ComicInfo fields are stored consistently.
-func cleanCSV(s string) string {
-	var out []string
-	for part := range strings.SplitSeq(s, ",") {
-		if part = strings.TrimSpace(part); part != "" {
-			out = append(out, part)
+// saveComicInfo marshals ci and writes it into the archive, replacing any
+// existing ComicInfo.xml, via the shared atomic rewrite. It prints nothing, so
+// batch runs can report the outcome in their own format.
+//
+// Every write goes through here, so this is where the archive-derived fields
+// are filled in: PageCount, and <Pages> (archive.ComicPages) — keeping any
+// hand-set page types from ci.Pages, or else from the ComicInfo being replaced.
+func saveComicInfo(path string, ci *comicinfo.ComicInfo) error {
+	a, err := archive.Open(path)
+	if err != nil {
+		return err
+	}
+	existing := ci.Pages
+	if existing == nil {
+		if old, _, _, _ := a.ReadComicInfo(); old != nil {
+			existing = old.Pages
 		}
 	}
-	return strings.Join(out, ", ")
+	pages := a.Pages(false)
+	a.Close()
+	ci.PageCount = len(pages)
+	ci.Pages = archive.ComicPages(pages, existing)
+
+	data, err := ci.Marshal()
+	if err != nil {
+		return err
+	}
+	keep := func(name string) bool { return !strings.EqualFold(name, archive.ComicInfoName) }
+	return archive.RewriteArchive(path, keep, map[string][]byte{archive.ComicInfoName: data})
 }
 
 // prompter reads single-line answers from stdin.

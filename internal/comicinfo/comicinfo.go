@@ -3,7 +3,15 @@
 // reused by readers, writers, and providers alike.
 package comicinfo
 
-import "encoding/xml"
+import (
+	"bytes"
+	"encoding/xml"
+	"fmt"
+	"reflect"
+	"strconv"
+	"strings"
+	"unicode/utf8"
+)
 
 // ComicInfo models ComicInfo.xml following the v2.1 schema. Fields are declared
 // in XSD document order so marshalled output validates against the sequence.
@@ -80,7 +88,7 @@ type PageInfo struct {
 }
 
 // AgeRatings is the ComicInfo AgeRating enumeration (schema v2.0), in the order
-// cb presents them as a numbered menu. Index 0 ("Unknown") is the default.
+// cbz presents them as a numbered menu. Index 0 ("Unknown") is the default.
 var AgeRatings = []string{
 	"Unknown",
 	"Adults Only 18+",
@@ -109,11 +117,84 @@ func Parse(data []byte) (*ComicInfo, error) {
 }
 
 // Marshal renders the ComicInfo as indented XML with a declaration header.
+//
+// Element text is escaped by escapeText rather than encoding/xml, which also
+// writes newlines, tabs and quotes as character references (&#xA;, &#34;, …).
+// Those are valid but make a Summary unreadable in the raw file, and XML text
+// content only needs &, < and > escaped. Element names are the struct's own
+// constants, so provider data can only ever appear as escaped text. <Pages>
+// (attribute data) is still encoded by encoding/xml, where quotes must stay
+// escaped.
 func (ci *ComicInfo) Marshal() ([]byte, error) {
-	body, err := xml.MarshalIndent(ci, "", "  ")
-	if err != nil {
-		return nil, err
+	var b bytes.Buffer
+	b.WriteString(xml.Header)
+	b.WriteString("<ComicInfo>\n")
+	v := reflect.ValueOf(ci).Elem()
+	t := v.Type()
+	for i := range t.NumField() {
+		f, fv := t.Field(i), v.Field(i)
+		if f.Name == "XMLName" || fv.IsZero() {
+			continue
+		}
+		if f.Name == "Pages" {
+			pages, err := xml.MarshalIndent(ci.Pages, "  ", "  ")
+			if err != nil {
+				return nil, err
+			}
+			b.Write(pages) // MarshalIndent writes the "  " prefix itself
+			b.WriteByte('\n')
+			continue
+		}
+		name, _, _ := strings.Cut(f.Tag.Get("xml"), ",")
+		var text string
+		switch fv.Kind() {
+		case reflect.String:
+			text = fv.String()
+		case reflect.Int:
+			text = strconv.FormatInt(fv.Int(), 10)
+		case reflect.Float64:
+			text = strconv.FormatFloat(fv.Float(), 'g', -1, 64)
+		default:
+			return nil, fmt.Errorf("comicinfo: cannot marshal field %s of kind %s", f.Name, fv.Kind())
+		}
+		b.WriteString("  <" + name + ">")
+		escapeText(&b, text)
+		b.WriteString("</" + name + ">\n")
 	}
-	out := append([]byte(xml.Header), body...)
-	return append(out, '\n'), nil
+	b.WriteString("</ComicInfo>\n")
+	return b.Bytes(), nil
+}
+
+// escapeText writes s as XML element text: &, < and > become entities (so no
+// value can open or close an element, or form "]]>"), \r is kept as a
+// reference (a parser would otherwise normalize it away), and anything that
+// isn't a legal XML character — control characters, invalid UTF-8 — becomes
+// U+FFFD, as encoding/xml does. Newlines, tabs and quotes are written as-is.
+func escapeText(b *bytes.Buffer, s string) {
+	for i := 0; i < len(s); {
+		r, width := utf8.DecodeRuneInString(s[i:])
+		i += width
+		switch {
+		case r == '&':
+			b.WriteString("&amp;")
+		case r == '<':
+			b.WriteString("&lt;")
+		case r == '>':
+			b.WriteString("&gt;")
+		case r == '\r':
+			b.WriteString("&#xD;")
+		case r == utf8.RuneError && width == 1, !isXMLChar(r):
+			b.WriteRune('�')
+		default:
+			b.WriteRune(r)
+		}
+	}
+}
+
+// isXMLChar reports whether r is in the XML 1.0 Char production.
+func isXMLChar(r rune) bool {
+	return r == '\t' || r == '\n' || r == '\r' ||
+		(r >= 0x20 && r <= 0xD7FF) ||
+		(r >= 0xE000 && r <= 0xFFFD) ||
+		(r >= 0x10000 && r <= 0x10FFFF)
 }

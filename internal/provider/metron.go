@@ -15,7 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"cb/internal/comicinfo"
+	"codeberg.org/Nikode/cbztool/internal/comicinfo"
+	"codeberg.org/Nikode/cbztool/internal/version"
 )
 
 const metronBaseURL = "https://metron.cloud/api"
@@ -25,11 +26,12 @@ const metronBaseURL = "https://metron.cloud/api"
 // memory. Metron issue/series JSON is a few KiB; 8 MiB is a generous ceiling.
 const maxResponseBytes = 8 << 20
 
-// userAgent identifies cb to the API. A descriptive, stable User-Agent (rather
-// than a generic or empty one) keeps us in good standing with Metron's bot /
-// rate-limit protection — a missing or generic UA is a common cause of 403s.
-// If you fork cb, feel free to add a contact URL here.
-const userAgent = "cb/0.1 (comic .cbz metadata tagger; Go net/http)"
+// userAgent identifies cbztool to the APIs, with its version and project URL.
+// A descriptive, stable User-Agent (rather than a generic or empty one) keeps
+// us in good standing with Metron's bot / rate-limit protection — a missing or
+// generic UA is a common cause of 403s. If you fork cbztool, point the URL at
+// your fork.
+var userAgent = "cbztool/" + version.String() + " (+https://codeberg.org/Nikode/cbztool)"
 
 // Retry policy for throttling (429/403) and transient server/network errors.
 const (
@@ -41,9 +43,9 @@ const (
 func init() {
 	registerProvider("metron", func(cfg ProviderConfig) (Provider, error) {
 		if cfg.Username == "" || cfg.Password == "" {
-			return nil, fmt.Errorf("metron requires a username and password (config file or CB_METRON_USERNAME/CB_METRON_PASSWORD)")
+			return nil, fmt.Errorf("metron requires a username and password (credentials.metron in the config, or CBZ_METRON_USERNAME/CBZ_METRON_PASSWORD)")
 		}
-		return newMetron(cfg.Username, cfg.Password), nil
+		return newMetron(cfg.Username, cfg.Password, cfg.CacheTTL), nil
 	})
 }
 
@@ -63,14 +65,14 @@ type metron struct {
 	cache map[string][]byte // url -> raw 200 response body, for the current run
 }
 
-func newMetron(user, pass string) *metron {
+func newMetron(user, pass string, cacheTTL time.Duration) *metron {
 	return &metron{
 		user:    user,
 		pass:    pass,
 		baseURL: metronBaseURL,
 		http:    &http.Client{Timeout: 30 * time.Second},
 		limiter: newRateLimiter(3 * time.Second), // ~20/min
-		disk:    newDiskCache("metron"),
+		disk:    newDiskCache("metron", cacheTTL),
 		cache:   make(map[string][]byte),
 	}
 }
@@ -297,6 +299,7 @@ type metronGenericItem struct {
 type metronIssue struct {
 	ID          int                 `json:"id"`
 	Number      string              `json:"number"`
+	AltNumber   string              `json:"alt_number"`
 	CollTitle   string              `json:"title"` // collection title
 	StoryNames  []string            `json:"name"`  // story titles
 	CoverDate   string              `json:"cover_date"`
@@ -308,6 +311,7 @@ type metronIssue struct {
 	CVID        int                 `json:"cv_id"` // ComicVine cross-ref
 	ResourceURL string              `json:"resource_url"`
 	Publisher   metronGenericItem   `json:"publisher"`
+	Imprint     metronGenericItem   `json:"imprint"` // null when none
 	Series      metronIssueSeries   `json:"series"`
 	Rating      metronGenericItem   `json:"rating"`
 	Credits     []metronCredit      `json:"credits"`
@@ -371,7 +375,7 @@ func stripSeriesYear(s string) string {
 	return seriesYearRe.ReplaceAllString(s, "")
 }
 
-func (m *metron) IssueByNumber(ctx context.Context, seriesID, number string) (*comicinfo.ComicInfo, error) {
+func (m *metron) IssueByNumber(ctx context.Context, seriesID, number string) (*Issue, error) {
 	q := url.Values{}
 	q.Set("series_id", seriesID)
 	q.Set("number", number)
@@ -443,37 +447,89 @@ func isPositiveIntID(s string) bool {
 	return err == nil && n > 0
 }
 
-func (m *metron) IssueByID(ctx context.Context, issueID string) (*comicinfo.ComicInfo, error) {
+func (m *metron) IssueByID(ctx context.Context, issueID string) (*Issue, error) {
+	iss, err := m.issueDetail(ctx, issueID)
+	if err != nil {
+		return nil, err
+	}
+	return metronIssueToIssue(iss), nil
+}
+
+func (m *metron) issueDetail(ctx context.Context, issueID string) (*metronIssue, error) {
 	var iss metronIssue
 	if err := m.get(ctx, fmt.Sprintf("/issue/%s/", url.PathEscape(issueID)), nil, &iss); err != nil {
 		return nil, err
 	}
-	return metronIssueToComicInfo(&iss), nil
+	return &iss, nil
 }
 
-// metronIssueToComicInfo maps a Metron issue onto cb's ComicInfo, filling as
+// IssueByXRef implements XRefLookup for ComicVine ids via Metron's cv_id issue
+// filter. The detail's own cv_id is checked against the requested id, so a
+// filter the server ignored (returning unrelated issues) can never be mistaken
+// for a match.
+func (m *metron) IssueByXRef(ctx context.Context, otherProvider, otherID string) (*Issue, error) {
+	if otherProvider != "comicvine" || !isPositiveIntID(otherID) {
+		return nil, fmt.Errorf("metron: no cross-reference for %s id %q: %w", otherProvider, otherID, ErrNotFound)
+	}
+	q := url.Values{}
+	q.Set("cv_id", otherID)
+	var list struct {
+		Results []struct {
+			ID int `json:"id"`
+		} `json:"results"`
+	}
+	if err := m.get(ctx, "/issue/", q, &list); err != nil {
+		return nil, err
+	}
+	if len(list.Results) != 1 {
+		return nil, fmt.Errorf("metron: no single issue with comicvine id %s: %w", otherID, ErrNotFound)
+	}
+	iss, err := m.issueDetail(ctx, strconv.Itoa(list.Results[0].ID))
+	if err != nil {
+		return nil, err
+	}
+	if strconv.Itoa(iss.CVID) != otherID {
+		return nil, fmt.Errorf("metron: issue %d does not cross-reference comicvine id %s: %w", iss.ID, otherID, ErrNotFound)
+	}
+	return metronIssueToIssue(iss), nil
+}
+
+// metronIssueToIssue wraps the mapped metadata with Metron's id and its
+// ComicVine cross-reference (when Metron records one).
+func metronIssueToIssue(iss *metronIssue) *Issue {
+	out := &Issue{ComicInfo: metronIssueToComicInfo(iss), ID: strconv.Itoa(iss.ID)}
+	if iss.CVID > 0 {
+		out.XRef = map[string]string{"comicvine": strconv.Itoa(iss.CVID)}
+	}
+	return out
+}
+
+// metronIssueToComicInfo maps a Metron issue onto cbz's ComicInfo, filling as
 // many v2.1 fields as the API exposes. PageCount is taken from Metron here but
 // is overwritten by the actual archive page count in the tag command before
 // writing. This function is pure for offline testing.
 func metronIssueToComicInfo(iss *metronIssue) *comicinfo.ComicInfo {
 	ci := &comicinfo.ComicInfo{
-		Series:     iss.Series.Name,
-		Number:     iss.Number,
-		Volume:     iss.Series.Volume,
-		Title:      firstNonEmpty(strings.Join(iss.StoryNames, "; "), iss.CollTitle),
-		Summary:    cleanSummary(iss.Desc),
-		Publisher:  iss.Publisher.Name,
-		Genre:      metronNames(iss.Series.Genres),
-		Web:        iss.ResourceURL,
-		PageCount:  iss.Page,
-		Format:     iss.Series.SeriesType.Name,
-		Characters: metronNames(iss.Characters),
-		Teams:      metronNames(iss.Teams),
-		StoryArc:   metronNames(iss.Arcs),
-		AgeRating:  mapMetronRating(iss.Rating.Name),
-		GTIN:       firstNonEmpty(iss.UPC, iss.ISBN),
+		Series:          iss.Series.Name,
+		Number:          iss.Number,
+		AlternateNumber: strings.TrimSpace(iss.AltNumber),
+		Volume:          iss.Series.Volume,
+		Title:           firstNonEmpty(strings.Join(iss.StoryNames, "; "), iss.CollTitle),
+		Summary:         cleanSummary(iss.Desc),
+		Publisher:       iss.Publisher.Name,
+		Imprint:         strings.TrimSpace(iss.Imprint.Name),
+		Genre:           metronNames(iss.Series.Genres),
+		Web:             iss.ResourceURL,
+		PageCount:       iss.Page,
+		Format:          iss.Series.SeriesType.Name,
+		Characters:      metronNames(iss.Characters),
+		Teams:           metronNames(iss.Teams),
+		StoryArc:        metronNames(iss.Arcs),
+		AgeRating:       mapMetronRating(iss.Rating.Name),
+		GTIN:            firstNonEmpty(iss.UPC, iss.ISBN),
 	}
-	if y, mo, d, ok := parseISODate(iss.CoverDate); ok {
+	// Store (on-sale) date first: cover dates are usually a nominal 1st-of-month.
+	if y, mo, d, ok := parseISODate(firstNonEmpty(iss.StoreDate, iss.CoverDate)); ok {
 		ci.Year, ci.Month, ci.Day = y, mo, d
 	}
 	assignCredits(ci, iss.Credits)

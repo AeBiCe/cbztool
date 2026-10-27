@@ -37,11 +37,12 @@ var (
 //	Saga Vol.2 014.cbz                      -> {Saga, 14, 0, 2}
 //	Series Name - 012 - The Will (2020).cbz -> {Series Name, 12, 2020, 0}
 //	[Group] Title 003 (digital-Empire).cbz  -> {Title, 3, 0, 0}
+//	Angor v01 - Runaway (2017).cbz          -> {Angor, 1, 2017, 1}
 //
 // Algorithm: pull the Year from inside (...) groups, strip all cruft groups,
 // extract and remove any volume marker, then take the issue number (a
-// #-prefixed token if present, else the last numeric token). The series is
-// whatever text precedes the chosen number token, cleaned up.
+// #-prefixed token if present, else the last numeric token, else the volume).
+// The series is whatever text precedes the chosen number token, cleaned up.
 func Parse(name string) ParsedName {
 	stem := strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
 	var p ParsedName
@@ -57,13 +58,20 @@ func Parse(name string) ParsedName {
 
 	work := groupRe.ReplaceAllString(stem, " ")
 
-	if m := volRe.FindStringSubmatch(work); m != nil {
-		vs := m[1]
-		if vs == "" {
-			vs = m[2]
+	volStart := -1
+	if m := volRe.FindStringSubmatchIndex(work); m != nil {
+		var vs string
+		if m[2] >= 0 {
+			vs = work[m[2]:m[3]]
+		} else {
+			vs = work[m[4]:m[5]]
 		}
 		p.Volume, _ = strconv.Atoi(vs)
-		work = volRe.ReplaceAllString(work, " ")
+		volStart = m[0]
+		// Blank with equal-length spaces so volStart stays a valid index.
+		work = volRe.ReplaceAllStringFunc(work, func(s string) string {
+			return strings.Repeat(" ", len(s))
+		})
 	}
 
 	numStart := -1
@@ -75,6 +83,9 @@ func Parse(name string) ParsedName {
 		last := locs[len(locs)-1]
 		raw = work[last[0]:last[1]]
 		numStart = last[0]
+	} else if volStart >= 0 {
+		raw = strconv.Itoa(p.Volume)
+		numStart = volStart
 	}
 
 	if raw != "" {

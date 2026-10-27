@@ -1,11 +1,12 @@
 // Package archive opens, validates, reads, and rewrites .cbz (ZIP) comic
-// archives. It enforces cb's security invariants — zip-slip rejection and
+// archives. It enforces cbz's security invariants — zip-slip rejection and
 // decompression-bomb caps — and performs all edits atomically (temp file +
 // rename) so an interrupted run never corrupts an archive.
 package archive
 
 import (
 	"archive/zip"
+	"bufio"
 	"fmt"
 	"io"
 	"os"
@@ -15,7 +16,8 @@ import (
 	"strconv"
 	"strings"
 
-	"cb/internal/comicinfo"
+	"codeberg.org/Nikode/cbztool/internal/comicinfo"
+	"codeberg.org/Nikode/cbztool/internal/imagemeta"
 )
 
 // ComicInfoName is the canonical metadata filename inside a .cbz archive.
@@ -30,13 +32,13 @@ const (
 	MaxEntrySize = 1 << 30 // 1 GiB per entry
 	MaxTotalSize = 4 << 30 // 4 GiB declared total
 
-	// maxComicInfoSize caps the one entry cb actually decompresses and parses.
+	// maxComicInfoSize caps the one entry cbz actually decompresses and parses.
 	// A metadata XML file is a few KiB even with per-page data, so 16 MiB is a
 	// generous ceiling that still bounds the memory a hostile archive can force.
 	maxComicInfoSize = 16 << 20
 )
 
-// imageExts lists the page-image extensions cb counts as pages.
+// imageExts lists the page-image extensions cbz counts as pages.
 var imageExts = map[string]bool{
 	".jpg":  true,
 	".jpeg": true,
@@ -50,6 +52,49 @@ var imageExts = map[string]bool{
 // IsImage reports whether name has a known page-image extension.
 func IsImage(name string) bool {
 	return imageExts[strings.ToLower(path.Ext(name))]
+}
+
+// junkNames are operating-system metadata files that end up in archives
+// zipped on macOS or browsed on Windows (compared case-insensitively).
+var junkNames = map[string]bool{".ds_store": true, "thumbs.db": true, "desktop.ini": true}
+
+// IsJunk reports whether name is operating-system cruft rather than content:
+// anything under a __MACOSX/ folder, AppleDouble "._" files, and the files in
+// junkNames. Junk is never a page, even with an image extension ("._001.jpg").
+func IsJunk(name string) bool {
+	for part := range strings.SplitSeq(name, "/") {
+		if strings.EqualFold(part, "__MACOSX") {
+			return true
+		}
+	}
+	base := path.Base(name)
+	return strings.HasPrefix(base, "._") || junkNames[strings.ToLower(base)]
+}
+
+// Kind classifies an archive entry by name.
+type Kind int
+
+const (
+	KindPage      Kind = iota // a page image
+	KindComicInfo             // ComicInfo.xml at the archive root
+	KindJunk                  // operating-system cruft (IsJunk)
+	KindDir                   // a directory entry
+	KindExtra                 // anything else: .nfo, .txt, scanner credits, …
+)
+
+// Classify reports what kind of entry name is.
+func Classify(name string) Kind {
+	switch {
+	case IsJunk(name):
+		return KindJunk
+	case strings.HasSuffix(name, "/"):
+		return KindDir
+	case strings.EqualFold(name, ComicInfoName):
+		return KindComicInfo
+	case IsImage(name):
+		return KindPage
+	}
+	return KindExtra
 }
 
 // safeName rejects zip entry names that are absolute, contain Windows
@@ -114,19 +159,69 @@ func (a *Archive) Close() error { return a.zr.Close() }
 // Files returns the archive's entries.
 func (a *Archive) Files() []*zip.File { return a.zr.File }
 
-// ImageEntries returns the names of image (page) entries, sorted by name.
-func (a *Archive) ImageEntries() []string {
-	var names []string
+// pageFiles returns the page image entries (Classify == KindPage), sorted by
+// name.
+func (a *Archive) pageFiles() []*zip.File {
+	var pages []*zip.File
 	for _, f := range a.Files() {
-		if f.FileInfo().IsDir() {
-			continue
-		}
-		if IsImage(f.Name) {
-			names = append(names, f.Name)
+		if !f.FileInfo().IsDir() && Classify(f.Name) == KindPage {
+			pages = append(pages, f)
 		}
 	}
-	sort.Strings(names)
+	sort.SliceStable(pages, func(i, j int) bool { return pages[i].Name < pages[j].Name })
+	return pages
+}
+
+// ImageEntries returns the names of image (page) entries, sorted by name.
+// OS junk with an image extension ("__MACOSX/._001.jpg") is not a page.
+func (a *Archive) ImageEntries() []string {
+	var names []string
+	for _, f := range a.pageFiles() {
+		names = append(names, f.Name)
+	}
 	return names
+}
+
+// Page is one page image entry and what its header says.
+type Page struct {
+	Name string
+	Size int64 // uncompressed bytes
+	imagemeta.Info
+	Err error // the entry is unreadable or not a recognised image
+}
+
+// Pages reads the header of every page image, in ImageEntries order. With full
+// set, each entry is also read to its end so archive/zip verifies the CRC-32
+// (a mismatch surfaces as zip.ErrChecksum in Err). Reads stay within the
+// per-entry size cap.
+func (a *Archive) Pages(full bool) []Page {
+	files := a.pageFiles()
+	pages := make([]Page, len(files))
+	for i, f := range files {
+		pages[i] = Page{Name: f.Name, Size: int64(f.UncompressedSize64)}
+		pages[i].Info, pages[i].Err = readPage(f, full)
+	}
+	return pages
+}
+
+// readPage decodes f's image header and, when full, drains the rest of it.
+func readPage(f *zip.File, full bool) (imagemeta.Info, error) {
+	rc, err := f.Open()
+	if err != nil {
+		return imagemeta.Info{}, err
+	}
+	defer rc.Close()
+	br := bufio.NewReader(io.LimitReader(rc, MaxEntrySize))
+	info, err := imagemeta.DecodeReader(br)
+	if err != nil {
+		return imagemeta.Info{}, err
+	}
+	if full {
+		if _, err := io.Copy(io.Discard, br); err != nil {
+			return imagemeta.Info{}, err
+		}
+	}
+	return info, nil
 }
 
 // PageCount is the number of image entries, used to fill ComicInfo PageCount.
@@ -187,8 +282,13 @@ func LastNumber(s string) (n int, raw string, ok bool) {
 // crash or error never leaves the original half-written. add may be nil.
 //
 // This is the shared write path for strip (keep filters out ComicInfo.xml) and
-// tag (add carries a new ComicInfo.xml).
+// tag (add carries a new ComicInfo.xml). A symlink is followed: the file it
+// points to is rewritten and the link itself is left in place (see realTarget).
 func RewriteArchive(path string, keep func(name string) bool, add map[string][]byte) error {
+	path, err := realTarget(path)
+	if err != nil {
+		return err
+	}
 	r, err := zip.OpenReader(path)
 	if err != nil {
 		return err
@@ -202,7 +302,7 @@ func RewriteArchive(path string, keep func(name string) bool, add map[string][]b
 		}
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".cb-*.cbz")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".cbz-*.cbz")
 	if err != nil {
 		return err
 	}
@@ -270,6 +370,12 @@ func BuildArchive(outPath string, entries map[string][]byte, force bool) error {
 			return err
 		}
 	}
+	if _, err := os.Lstat(outPath); err == nil {
+		// Overwriting (force): replace what a symlink points to, not the link.
+		if outPath, err = realTarget(outPath); err != nil {
+			return err
+		}
+	}
 	if len(entries) == 0 {
 		return fmt.Errorf("no entries to pack")
 	}
@@ -290,7 +396,7 @@ func BuildArchive(outPath string, entries map[string][]byte, force bool) error {
 		}
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(outPath), ".cb-*.cbz")
+	tmp, err := os.CreateTemp(filepath.Dir(outPath), ".cbz-*.cbz")
 	if err != nil {
 		return err
 	}
@@ -324,11 +430,44 @@ func BuildArchive(outPath string, entries map[string][]byte, force bool) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
+
+	// CreateTemp makes the file 0600; a new archive should be readable like any
+	// other file the user creates (e.g. by a comic server running as another
+	// user), and an overwritten one keeps its existing permissions.
+	mode := os.FileMode(0o644)
+	if info, serr := os.Stat(outPath); serr == nil {
+		mode = info.Mode().Perm()
+	}
+	if err := os.Chmod(tmpName, mode); err != nil {
+		return err
+	}
 	if err := os.Rename(tmpName, outPath); err != nil {
 		return err
 	}
 	committed = true
 	return nil
+}
+
+// realTarget resolves the file an in-place edit must replace. The atomic write
+// renames a temp file over its target, and renaming over a symlink would
+// replace the link itself with a regular file — silently leaving the real
+// archive unedited and the library's link layout broken. So a symlink is
+// resolved (through any chain of links) to its target, which must be a regular
+// file; the temp file is then created beside the target so the rename stays on
+// one filesystem.
+func realTarget(path string) (string, error) {
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(real)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%s is not a regular file", path)
+	}
+	return real, nil
 }
 
 // copyRaw copies a zip entry into zw without recompressing, preserving the

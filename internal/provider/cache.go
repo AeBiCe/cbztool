@@ -8,15 +8,16 @@ import (
 	"time"
 )
 
-// cacheTTL is how long a cached API response stays fresh before cb refetches it.
+// defaultCacheTTL is how long a cached API response stays fresh before cbz
+// refetches it, unless the config sets providers.cache_ttl.
 // Comic metadata is largely immutable once published, but corrections do happen
 // upstream, so a short TTL keeps repeat/cross-run requests cheap and polite
 // (Metron asks clients to cache) while letting an upstream fix surface by the
-// next day. Bypass the cache for a single run with `cb tag --refresh`.
-const cacheTTL = 24 * time.Hour
+// next day. Bypass the cache for a single run with `cbz tag --refresh`.
+const defaultCacheTTL = 24 * time.Hour
 
 // diskCache is a best-effort, on-disk store of raw 200 response bodies keyed by
-// request URL. It lives under $XDG_CACHE_HOME/cb (so it is safe to delete and is
+// request URL. It lives under $XDG_CACHE_HOME/cbz (so it is safe to delete and is
 // never backed up). Every operation degrades silently to a miss on any I/O
 // error: the cache must never be the reason a tag fails.
 type diskCache struct {
@@ -24,19 +25,23 @@ type diskCache struct {
 	ttl time.Duration
 }
 
-// newDiskCache returns a cache rooted at $XDG_CACHE_HOME/cb/<name> (falling back
-// to ~/.cache/cb/<name>). If the directory can't be resolved or created, the
-// returned cache is disabled rather than an error — caching is an optimization,
-// not a requirement.
-func newDiskCache(name string) *diskCache {
+// newDiskCache returns a cache rooted at $XDG_CACHE_HOME/cbz/<name> (falling back
+// to ~/.cache/cbz/<name>) whose entries stay fresh for ttl (defaultCacheTTL when
+// zero). If the directory can't be resolved or created, the returned cache is
+// disabled rather than an error — caching is an optimization, not a
+// requirement.
+func newDiskCache(name string, ttl time.Duration) *diskCache {
+	if ttl <= 0 {
+		ttl = defaultCacheTTL
+	}
 	dir, err := cacheDir(name)
 	if err != nil {
 		return &diskCache{}
 	}
-	return &diskCache{dir: dir, ttl: cacheTTL}
+	return &diskCache{dir: dir, ttl: ttl}
 }
 
-// cacheDir resolves and creates $XDG_CACHE_HOME/cb/<name> (or the ~/.cache
+// cacheDir resolves and creates $XDG_CACHE_HOME/cbz/<name> (or the ~/.cache
 // fallback).
 func cacheDir(name string) (string, error) {
 	base := os.Getenv("XDG_CACHE_HOME")
@@ -47,7 +52,7 @@ func cacheDir(name string) (string, error) {
 		}
 		base = filepath.Join(home, ".cache")
 	}
-	dir := filepath.Join(base, "cb", name)
+	dir := filepath.Join(base, "cbz", name)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}

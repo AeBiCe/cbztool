@@ -25,6 +25,11 @@ func TestParse(t *testing.T) {
 		{"  Spaced Series  4  .cbz", ParsedName{Series: "Spaced Series", Number: "4"}},
 		{"Series Vol 3 #10 (2021).cbz", ParsedName{Series: "Series", Number: "10", Year: 2021, Volume: 3}},
 		{"Series (2020).cbz", ParsedName{Series: "Series", Year: 2020}}, // year only, no number
+
+		// Volume-only names: the volume is the issue number, subtitle dropped.
+		{"Angor v01 - Runaway (2017).cbz", ParsedName{Series: "Angor", Number: "1", Year: 2017, Volume: 1}},
+		{"Saga Vol. 2 (2013).cbz", ParsedName{Series: "Saga", Number: "2", Year: 2013, Volume: 2}},
+		{"Series Volume 3 - Subtitle.cbz", ParsedName{Series: "Series", Number: "3", Volume: 3}},
 	}
 
 	for _, c := range cases {

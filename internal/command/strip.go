@@ -3,29 +3,31 @@ package command
 import (
 	"flag"
 	"fmt"
-	"os"
 	"strings"
 
-	"cb/internal/archive"
+	"codeberg.org/Nikode/cbztool/internal/archive"
+	"codeberg.org/Nikode/cbztool/internal/term"
 )
 
-// Strip implements `cb strip <path>`: remove ComicInfo.xml.
+// Strip implements `cbz strip <path>`: remove ComicInfo.xml.
 func Strip(args []string) error {
 	fs := flag.NewFlagSet("strip", flag.ExitOnError)
 	_ = fs.Parse(args)
 	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: cb strip <path>")
+		return fmt.Errorf("usage: cbz strip <path>")
 	}
 	files, err := cbzFiles(fs.Arg(0))
 	if err != nil {
 		return err
 	}
+	failed := 0
 	for _, f := range files {
 		if err := stripOne(f); err != nil {
-			fmt.Fprintf(os.Stderr, "cb: %s: %s\n", Sanitize(f), Sanitize(err.Error()))
+			term.Errorf("%s: %s", Sanitize(f), Sanitize(err.Error()))
+			failed++
 		}
 	}
-	return nil
+	return failedErr(failed, len(files))
 }
 
 func stripOne(path string) error {
