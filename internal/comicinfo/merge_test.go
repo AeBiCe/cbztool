@@ -38,7 +38,7 @@ func TestMerge(t *testing.T) {
 		Inker:       "Ariel Olivetti",
 		Characters:  "Black Bolt, Medusa (Marvel), Karnak, Lockjaw",
 		Teams:       "Inhumans", Locations: "Attilan",
-		Web: "https://metron.cloud/issue/x/ https://comicvine.gamespot.com/x/",
+		Web: "https://metron.cloud/issue/x/,https://comicvine.gamespot.com/x/",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Merge:\n got %+v\nwant %+v", got, want)

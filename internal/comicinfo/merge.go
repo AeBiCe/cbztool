@@ -21,7 +21,8 @@ import (
 //     ComicVine credits a person's roles once per issue, so its cover artists
 //     also show up as penciller/inker/colorist; unioning would mix them into
 //     the interior credits.
-//   - Web keeps both URLs, space-separated (ComicInfo v2.1 allows several).
+//   - Web keeps both URLs, comma-separated: Kavita reads issue ids only from
+//     comma-separated links (its display accepts either separator).
 func Merge(primary, secondary *ComicInfo) *ComicInfo {
 	switch {
 	case primary == nil && secondary == nil:
@@ -47,7 +48,7 @@ func Merge(primary, secondary *ComicInfo) *ComicInfo {
 	}
 
 	if primary.Web != "" && secondary.Web != "" && primary.Web != secondary.Web {
-		out.Web = primary.Web + " " + secondary.Web
+		out.Web = primary.Web + "," + secondary.Web
 	}
 	return &out
 }

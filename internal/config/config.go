@@ -52,10 +52,13 @@ type Providers struct {
 	CacheTTL Duration `json:"cache_ttl"`
 }
 
-// Rename controls `cbz rename`.
+// Rename controls `cbz rename`, and renaming after an online `cbz tag`.
 type Rename struct {
 	// Template builds a filename from ComicInfo fields; see `cbz rename -h`.
 	Template string `json:"template"`
+	// OnTag renames each archive an online `cbz tag` writes, as if -r were
+	// given (-r=false turns it off for one run).
+	OnTag bool `json:"on_tag"`
 }
 
 // Credentials locates one provider's secret: an API key (Metron calls it an
@@ -107,7 +110,7 @@ func (d Duration) MarshalJSON() ([]byte, error) {
 }
 
 // DefaultTemplate is the built-in `cbz rename` template.
-const DefaultTemplate = "{Series}[ ({Year})] #{Number:3}"
+const DefaultTemplate = "{Series} #{Number:3}[ - {Title}]"
 
 // Default returns the built-in settings that every config file layers onto.
 func Default() *Config {

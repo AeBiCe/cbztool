@@ -40,8 +40,10 @@ func Tag(args []string) error {
 	fs.StringVar(providerName, "p", "", "shorthand for --provider")
 	verbose := fs.Bool("verbose", false, "show parsed fields, series candidates, and how each source was matched")
 	fs.BoolVar(verbose, "v", false, "shorthand for --verbose")
+	rename := fs.Bool("rename", false, "rename each tagged file with the rename template (default: rename.on_tag from the config)")
+	fs.BoolVar(rename, "r", false, "shorthand for --rename")
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "usage: cbz tag [-p <provider>] [--id <issueID>] [--series-id <seriesID>] [--dry-run] [--force] [--pick] [--refresh] [-v] <path>")
+		fmt.Fprintln(fs.Output(), "usage: cbz tag [-p <provider>] [--id <issueID>] [--series-id <seriesID>] [--dry-run] [--force] [--pick] [--refresh] [-r] [-v] <path>")
 		fmt.Fprintln(fs.Output(), "       cbz tag -m ...   manual mode (prompts, JSON file, or -s Field=Value); see cbz tag -m -h")
 		fs.PrintDefaults()
 	}
@@ -82,6 +84,9 @@ func Tag(args []string) error {
 
 	src, err := openProviders(*providerName, *refresh, *verbose)
 	if err != nil {
+		return err
+	}
+	if src.rename, err = newTagRenamer(fs, *rename); err != nil {
 		return err
 	}
 	if idProv == "" {
@@ -139,6 +144,58 @@ func buildProvider(cfg *config.Config, name string, refresh bool) (provider.Prov
 	return prov, nil
 }
 
+// tagRenamer renames the archives an online tag writes (-r, rename.on_tag)
+// from the metadata just resolved, with the same template and rules as
+// `cbz rename`.
+type tagRenamer struct {
+	tmpl    *nameTemplate
+	planned map[string]bool // dry-run: targets already claimed by an earlier file
+}
+
+// newTagRenamer returns the run's renamer, or nil when renaming is off:
+// -r/--rename when given on the command line, else rename.on_tag.
+func newTagRenamer(fs *flag.FlagSet, flagValue bool) (*tagRenamer, error) {
+	cfg, err := loadConfig()
+	if err != nil {
+		return nil, err
+	}
+	on := cfg.Rename.OnTag
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "rename" || f.Name == "r" {
+			on = flagValue
+		}
+	})
+	if !on {
+		return nil, nil
+	}
+	tmpl, err := parseNameTemplate(cfg.Rename.Template)
+	if err != nil {
+		return nil, fmt.Errorf("tag: rename.template %q: %w", cfg.Rename.Template, err)
+	}
+	return &tagRenamer{tmpl: tmpl, planned: map[string]bool{}}, nil
+}
+
+// notes renames a just-tagged path from ci (unless dryRun) and reports it for
+// the file's line. A rename that can't happen is a warning, never a failure:
+// the tag itself stands, and `cbz rename` can retry later.
+func (r *tagRenamer) notes(path string, ci *comicinfo.ComicInfo, dryRun bool) []note {
+	if r == nil {
+		return nil
+	}
+	newPath, skip, err := renameTo(path, ci, r.tmpl, dryRun, r.planned)
+	switch {
+	case err != nil:
+		return []note{{warn: true, text: "not renamed: " + err.Error()}}
+	case skip != "":
+		return []note{{warn: true, text: "not renamed: " + skip}}
+	case newPath == filepath.Clean(path):
+		return nil
+	case dryRun:
+		return []note{{text: "would rename to " + filepath.Base(newPath)}}
+	}
+	return []note{{text: "renamed to " + filepath.Base(newPath)}}
+}
+
 // --- online tagging (formerly `cb fetch`) ---
 
 // tagFileOnline resolves and writes (or dry-run prints) metadata for one
@@ -185,6 +242,7 @@ func tagFileOnline(src sources, idProv provider.Provider, path, id string, dryRu
 	} else if err := saveComicInfo(path, ci); err != nil {
 		return err
 	}
+	o.notes = append(o.notes, src.rename.notes(path, ci, dryRun)...)
 	fmt.Printf("  %s as %s\n", o.summary(dryRun), Sanitize(issueLabel(ci)))
 	printFileNotes("  ", o.notes)
 	os.Stdout.Write(o.dump)
@@ -544,6 +602,7 @@ func tagFileWithResolver(src sources, prov provider.Provider, path string, resol
 	} else if err := saveComicInfo(path, ci); err != nil {
 		return fileOutcome{number: number, err: err}
 	}
+	o.notes = append(o.notes, src.rename.notes(path, ci, dryRun)...)
 	return o
 }
 

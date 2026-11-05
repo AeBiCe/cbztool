@@ -14,11 +14,12 @@ import (
 	"github.com/AeBiCe/cbztool/internal/term"
 )
 
-// sources is the set of providers an online run draws on and how their data is
-// merged.
+// sources is the set of providers an online run draws on, how their data is
+// merged, and whether tagged files are then renamed.
 type sources struct {
 	chain  []provider.Provider // precedence order: the first wins single values
 	prefer map[string]string   // ComicInfo field -> provider whose value wins it
+	rename *tagRenamer         // nil: leave file names alone
 }
 
 // openProviders builds the providers for an online run, in the configured

@@ -7,6 +7,30 @@ covers, and what 0.x versions promise).
 
 ## [Unreleased]
 
+### Added
+
+- `cbz tag -r` (`--rename`) renames each file after an online tag, using the
+  metadata just fetched and the `rename.template`; with `--dry-run` it only
+  shows the new name. Set `rename.on_tag: true` in the config to rename on every
+  online tag (`-r=false` turns it off for one run). A file that can't be renamed
+  (e.g. the name is taken) is still tagged and gets a `[!]` warning.
+- README: a file-naming guide, and a table of every template field with what
+  Metron and ComicVine fill in.
+
+### Changed
+
+- **Breaking:** the default `rename.template` is now
+  `{Series} #{Number:3}[ - {Title}]` (`Batman #666 - Batman in Bethlehem.cbz`).
+  The cover year is no longer in the name, and the issue title is added when
+  one is on record. To keep the old names, set
+  `"rename": {"template": "{Series}[ ({Year})] #{Number:3}"}`.
+
+### Fixed
+
+- A merged `Web` now separates the Metron and ComicVine URLs with a comma
+  instead of a space, so Kavita recognizes the ComicVine issue id. Re-tag
+  existing files to pick it up.
+
 ## [0.9.0] - 2026-10-27
 
 First tracked release: feature-complete toward 1.0.0.

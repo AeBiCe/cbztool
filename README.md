@@ -99,7 +99,7 @@ a skipped file (for example, one already tagged) is not a failure.
 | `cbz tag <path>`      |      | Write `ComicInfo.xml` from an online provider, or `-m`/`--manual` to enter it by hand. |
 | `cbz strip <path>`    |      | Remove `ComicInfo.xml`. |
 | `cbz edit <file>`     |      | Edit one archive's metadata as JSON in `$VISUAL`/`$EDITOR` (default `vi`). Every field is listed; empty a value to remove it. Nothing is written if nothing changed; the changed fields are listed after saving. |
-| `cbz rename <path>`   |      | Rename archives from their `ComicInfo.xml` using a name template (see below). `-n` previews. |
+| `cbz rename <path>`   |      | Rename archives from their `ComicInfo.xml` using a name template (see [File naming](#file-naming-cbz-rename-cbz-tag--r)). `-n` previews. |
 | `cbz stats <path>`    |      | Library summary: archives, size, pages, series, tagged/untagged, and how many have page-numbering problems or OS junk. Reads only the ZIP directory and `ComicInfo.xml`, so it's fast; `-v` lists the files behind each count. |
 | `cbz missing <dir>`   |      | For each series, list the issues you don't have (see below). `--offline` reports only gaps in your local numbering. |
 | `cbz dupes <dir>`     |      | Find archives with byte-identical pages (renamed, repacked, re-tagged or cleaned copies included), without decompressing anything. Reports only; never deletes. |
@@ -109,29 +109,104 @@ a skipped file (for example, one already tagged) is not a failure.
 
 Run any command with `-h` to see its flags.
 
-### `cbz rename`
+### File naming (`cbz rename`, `cbz tag -r`)
 
-Renames each archive from its metadata, in place (same directory), using
-`rename.template` from the [config](#configuration) or `-t`:
+cbz names each issue by series, number and title. The years go in the folder
+name and the metadata:
+
+```
+Batman (1940)/                              ← series folder: name (start year), made by you
+  Batman #666 - Batman in Bethlehem.cbz
+  Batman #667.cbz                           ← no title on record: " - …" is dropped
+```
+
+- **Series folder:** `Name (start year)`, e.g. `Batman (2011)` for the New 52
+  run. You create it; cbz never renames directories. The start year tells apart
+  runs that share a name, and keeps every issue of a run together even when
+  they were published across several years.
+- **Issue file:** `{Series} #{Number:3}[ - {Title}]`. The number is
+  zero-padded so files sort in reading order (`#001`, `#002`, … `#666`). The
+  cover year and date stay in `ComicInfo.xml`, where readers such as Komga and
+  Kavita read them.
+
+There are two ways to apply it, both using `rename.template` from the
+[config](#configuration):
 
 ```sh
-cbz rename -n ./library/            # preview
+cbz tag -r ./Batman\ \(1940\)/      # tag online, then rename each file from what was fetched
+cbz rename -n ./library/            # preview renaming already-tagged files
 cbz rename ./library/
-cbz rename -t '{Series} v{Volume} #{Number:3}[ - {Title}]' comic.cbz
+cbz rename -t '{Series}[ ({Year})] #{Number:3}' comic.cbz   # a one-off template
 ```
+
+`tag -r` (`--rename`) renames each file right after it is tagged, using the
+metadata just fetched. With `--dry-run` it only shows the new name. To rename
+on every online tag, set `"rename": {"on_tag": true}` in the config;
+`-r=false` turns that off for one run. A file that can't be renamed (e.g. the
+name is taken) keeps its name and is reported with a `[!]` warning under its
+line. It is still tagged, and `cbz rename` can retry later. Manual tagging
+(`-m`) doesn't rename.
+
+#### Templates
 
 | Template | Meaning |
 |---|---|
-| `{Series}` | a ComicInfo field's value (any field: `{Title}`, `{Year}`, `{Publisher}`, …; case-insensitive) |
-| `{Number:3}` | zero-pad the integer part to 3 digits: `1` → `001`, `1.5` → `001.5` |
-| `[ ({Year})]` | optional group: dropped when any field inside it is empty |
+| `{Series}` | a ComicInfo field's value (any field in the table below; case-insensitive) |
+| `{Number:3}` | zero-pad the leading number to 3 digits: `1` → `001`, `1.5` → `001.5`; works on any numeric field (`{Month:2}` → `07`) |
+| `[ - {Title}]` | optional group: dropped when any field inside it is empty |
 | `\{` `\[` | a literal brace or bracket |
 
-The default, `{Series}[ ({Year})] #{Number:3}`, gives `Saga (2012) #001.cbz`.
 A field outside an optional group must have a value, or the file is skipped.
 Characters that aren't allowed in file names are replaced (`:` → ` -`,
-`/` → `-`, `?`/`*` dropped). A rename never overwrites an existing file (that
-file is skipped and reported), and files without `ComicInfo.xml` are skipped.
+`/` → `-`, `?`/`*` dropped), and names are cut to 250 bytes. A rename stays in
+the same directory and never overwrites an existing file (that file is skipped
+and reported). Files without `ComicInfo.xml` are skipped.
+
+Some combinations, for an issue tagged from Metron + ComicVine:
+
+| Template | Result |
+|---|---|
+| `{Series} #{Number:3}[ - {Title}]` (default) | `Batman #666 - Batman in Bethlehem.cbz` |
+| `{Series} #{Number:3}` | `Batman #666.cbz` |
+| `{Series}[ ({Year})] #{Number:3}` (the previous default) | `Batman (2007) #666.cbz` |
+| `{Series} #{Number:3} ({Year}-{Month:2})` | `Batman #666 (2007-07).cbz` |
+| `[{Publisher} - ]{Series}[ v{Volume}] #{Number:3}` | `DC Comics - Batman v1 #666.cbz` |
+| `{Series} #{Number:3}[ - {StoryArc}]` | `Batman #666 - <arc>.cbz` |
+
+#### Template fields
+
+Every ComicInfo field can be used in a template. The table shows what fills each
+field when you tag online. Anything can also be set by hand (`cbz tag -m`,
+`cbz edit`).
+
+| Field | Example | Metron | ComicVine |
+|---|---|---|---|
+| `Series` | `Batman` | ✅ | ✅ |
+| `Number` | `666` | ✅ | ✅ |
+| `Title` | `Batman in Bethlehem` | ✅ | ✅ |
+| `Year`, `Month`, `Day` | `2007`, `7`, `5` (store date, else cover date) | ✅ | ✅ |
+| `Summary` | the issue's description | ✅ | ✅ |
+| `Web` | the issue's page URL(s) | ✅ | ✅ |
+| `Publisher` | `DC Comics` | ✅ | ✅ |
+| `Writer`, `Penciller`, `Inker`, `Colorist`, `Letterer`, `CoverArtist`, `Editor`, `Translator` | `Grant Morrison` | ✅ | ✅ |
+| `Characters`, `Teams`, `StoryArc` | `Batman, Damian Wayne` | ✅ | ✅ |
+| `Volume` | `1` | ✅ | — |
+| `AlternateNumber` | | ✅ | — |
+| `Imprint` | `Vertigo` | ✅ | — |
+| `Genre` | `Superhero` | ✅ | — |
+| `Format` | `Cancelled Series`, `Trade Paperback` | ✅ | — |
+| `AgeRating` | `Teen` | ✅ | — |
+| `GTIN` | UPC or ISBN | ✅ | — |
+| `Locations` | `Gotham City` | — | ✅ |
+| `Notes` | `Tagged by cbz: metron issue …` (written by cbz) | ✅ | ✅ |
+| `Count`, `AlternateSeries`, `AlternateCount`, `Tags`, `LanguageISO`, `BlackAndWhite`, `Manga`, `ScanInformation`, `StoryArcNumber`, `SeriesGroup`, `CommunityRating`, `MainCharacterOrTeam`, `Review` | | — | — |
+
+When both providers are used, Metron's value wins for single values and the
+lists are combined (see [Combining Metron and ComicVine](#combining-metron-and-comicvine)).
+`PageCount` is computed from the archive and can't be used in a template.
+Some fields can be long or contain several values (creators, `Characters`,
+`StoryArc`), and Metron joins the story titles of a multi-story issue with
+`; `. Wrap such fields in an optional group, and expect longer names.
 
 ### `cbz missing`
 
@@ -189,6 +264,7 @@ cbz tag --id 4000-675976 comic.cbz # exact issue lookup, no matching (bare numbe
 cbz tag --series-id 14195 ./run/   # pin a directory to a known series; match by number
 cbz tag --pick comic.cbz           # force the series picker
 cbz tag --refresh comic.cbz        # ignore cached responses, refetch fresh
+cbz tag -r ./library/              # tag, then rename each file (see File naming)
 cbz tag -v ./library/              # verbose: show the series grouping tree + candidates
 cbz tag ./library/                 # batch: auto-match every .cbz, skip the unsure
 ```
@@ -300,7 +376,8 @@ By default `cbz tag` uses **every configured provider and combines them**:
    `Medusa (Marvel)` and `Medusa` are one entry); creator roles (Writer,
    Penciller, …) keep Metron's credits and take ComicVine's only for a role
    Metron left empty (ComicVine lists cover artists under interior roles too);
-   `Web` keeps both URLs.
+   `Web` keeps both URLs, comma-separated (Kavita reads the ComicVine id from
+   it).
    `Notes` records the source ids, e.g. `Tagged by cbz: metron issue 12345,
    comicvine issue 675976`.
 
@@ -321,15 +398,8 @@ cbz tag ./library/                 # metron + comicvine, combined
 cbz tag -p cv comic.cbz            # comicvine only
 ```
 
-What each source contributes:
-
-| Field | Metron | ComicVine |
-|---|---|---|
-| Series, Number, Title, Summary, Web, date (store date, else cover date) | ✅ | ✅ |
-| Writer / Penciller / Inker / Colorist / Letterer / CoverArtist / Editor | ✅ | ✅ |
-| Characters, Teams, StoryArc, Publisher | ✅ | ✅ |
-| Volume, Genre, Format, AgeRating, GTIN, Imprint, AlternateNumber | ✅ | — |
-| Locations | — | ✅ |
+What each source contributes is listed field by field under
+[Template fields](#template-fields).
 
 `Count` is never written from a provider (for an ongoing series it goes stale);
 set it by hand with `cbz tag -m -s Count=12` if you want it.
@@ -364,7 +434,7 @@ cbz config path        # which files are read
     "prefer": { "Summary": "comicvine" },
     "cache_ttl": "24h"
   },
-  "rename": { "template": "{Series}[ ({Year})] #{Number:3}" },
+  "rename": { "template": "{Series} #{Number:3}[ - {Title}]", "on_tag": false },
   "credentials": {
     "metron":    { "api_key_file": "~/.config/cbztool/metron-token" },
     "comicvine": { "api_key_file": "/run/agenix/comicvine" }
@@ -378,6 +448,9 @@ cbz config path        # which files are read
   every source (Genre, Tags, Characters, Teams, Locations, StoryArc) can't be
   preferred; `Year` stands for the whole date.
 - `providers.cache_ttl` — how long API responses are cached.
+- `rename.template` — the file name template (see [File naming](#file-naming-cbz-rename-cbz-tag--r)).
+- `rename.on_tag` — rename each file an online `cbz tag` writes, as if `-r`
+  were given (default `false`).
 - `credentials` — one block per provider. Configure both to get combined
   metadata; a provider without credentials is skipped (unless you select it with
   `-p`).

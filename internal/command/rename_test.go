@@ -42,7 +42,7 @@ func TestRenderNameTemplate(t *testing.T) {
 		want    string
 		wantErr string
 	}{
-		{config.DefaultTemplate, saga, "Saga (2012) #001", ""},
+		{config.DefaultTemplate, saga, "Saga #001 - Chapter One", ""},
 		{config.DefaultTemplate, &comicinfo.ComicInfo{Series: "Saga", Number: "1.5"}, "Saga #001.5", ""}, // group dropped
 		{config.DefaultTemplate, &comicinfo.ComicInfo{Series: "Saga", Number: "1000"}, "Saga #1000", ""},
 		{config.DefaultTemplate, &comicinfo.ComicInfo{Series: "Saga"}, "", "no Number"},
@@ -113,15 +113,15 @@ func TestRenameOne(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	a := mk("saga_01.cbz", &comicinfo.ComicInfo{Series: "Saga", Number: "1", Year: 2012})
-	b := mk("saga 1 copy.cbz", &comicinfo.ComicInfo{Series: "Saga", Number: "1", Year: 2012})
+	a := mk("saga_01.cbz", &comicinfo.ComicInfo{Series: "Saga", Number: "1", Year: 2012, Title: "Chapter One"})
+	b := mk("saga 1 copy.cbz", &comicinfo.ComicInfo{Series: "Saga", Number: "1", Year: 2012, Title: "Chapter One"})
 	c := mk("untagged.cbz", nil)
-	d := mk("Saga (2012) #002.cbz", &comicinfo.ComicInfo{Series: "Saga", Number: "2", Year: 2012})
+	d := mk("Saga #002.cbz", &comicinfo.ComicInfo{Series: "Saga", Number: "2", Year: 2012})
 
 	t.Run("dry run claims targets and touches nothing", func(t *testing.T) {
 		planned := map[string]bool{}
 		np, skip, err := renameOne(a, tmpl, true, planned)
-		if err != nil || skip != "" || filepath.Base(np) != "Saga (2012) #001.cbz" {
+		if err != nil || skip != "" || filepath.Base(np) != "Saga #001 - Chapter One.cbz" {
 			t.Fatalf("a: %q %q %v", np, skip, err)
 		}
 		if _, skip, _ := renameOne(b, tmpl, true, planned); !strings.Contains(skip, "another file") {
@@ -150,7 +150,7 @@ func TestRenameOne(t *testing.T) {
 		for _, e := range entries {
 			names = append(names, e.Name())
 		}
-		want := []string{"Saga (2012) #001.cbz", "Saga (2012) #002.cbz", "saga 1 copy.cbz", "untagged.cbz"}
+		want := []string{"Saga #001 - Chapter One.cbz", "Saga #002.cbz", "saga 1 copy.cbz", "untagged.cbz"}
 		if !slices.Equal(names, want) || filepath.Base(np) != want[0] {
 			t.Errorf("dir = %v", names)
 		}

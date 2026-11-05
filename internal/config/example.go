@@ -11,7 +11,8 @@ const Example = `{
     "cache_ttl": "24h"
   },
   "rename": {
-    "template": "{Series}[ ({Year})] #{Number:3}"
+    "template": "{Series} #{Number:3}[ - {Title}]",
+    "on_tag": false
   },
   "credentials": {
     "metron": {

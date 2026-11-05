@@ -109,7 +109,12 @@ func renameOne(path string, tmpl *nameTemplate, dryRun bool, planned map[string]
 	case cerr != nil:
 		return "", "", fmt.Errorf("ComicInfo.xml: %w", cerr)
 	}
+	return renameTo(path, ci, tmpl, dryRun, planned)
+}
 
+// renameTo is renameOne with the metadata already in hand (`tag -r` passes
+// what it just resolved, which under dry-run was never written).
+func renameTo(path string, ci *comicinfo.ComicInfo, tmpl *nameTemplate, dryRun bool, planned map[string]bool) (newPath, skip string, err error) {
 	name, err := tmpl.render(ci)
 	if err != nil {
 		return "", err.Error(), nil
